@@ -75,6 +75,8 @@ export interface WatchedContract {
   network: Network
   rules: AlertRule[]
   webhook_url: string
+  /** Whether this contract is actively watched. Absent = true. */
+  enabled?: boolean
   created_at: number
   updated_at: number
 }

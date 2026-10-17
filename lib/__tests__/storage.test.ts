@@ -93,6 +93,15 @@ describe('saveContract / getContracts', () => {
     expect(contracts[0].id).toBe('c1');
   });
 
+  it('does not touch txwatch_alerts on contract save', () => {
+    addAlert(alert1);
+    addAlert(alert2);
+    const before = localStorage.getItem('txwatch_alerts');
+    saveContract(contract1);
+    saveContract(contract2);
+    expect(localStorage.getItem('txwatch_alerts')).toBe(before);
+  });
+
   it('retrieves multiple saved contracts', () => {
     saveContract(contract1);
     saveContract(contract2);

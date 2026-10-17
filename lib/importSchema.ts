@@ -170,7 +170,7 @@ export function validateContractEntry(entry: unknown): WatchedContract | string 
     rules.push(result)
   }
   const now = Date.now()
-  return {
+  const contract: WatchedContract = {
     id: typeof e.id === 'string' && e.id ? e.id : `${e.contract_id}:${e.network}`,
     label: typeof e.label === 'string' && e.label.trim() ? e.label : e.contract_id,
     contract_id: e.contract_id,
@@ -180,6 +180,8 @@ export function validateContractEntry(entry: unknown): WatchedContract | string 
     created_at: typeof e.created_at === 'number' ? e.created_at : now,
     updated_at: typeof e.updated_at === 'number' ? e.updated_at : now,
   }
+  if (typeof e.enabled === 'boolean') contract.enabled = e.enabled
+  return contract
 }
 
 /**

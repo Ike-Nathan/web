@@ -62,6 +62,12 @@ describe('parseImport', () => {
     expect(r).toContain(long)
   })
 
+  it('preserves the enabled flag through validation', () => {
+    expect(validateContractEntry({ ...good, enabled: true })).toMatchObject({ enabled: true })
+    expect(validateContractEntry({ ...good, enabled: false })).toMatchObject({ enabled: false })
+    expect(validateContractEntry(good)).not.toHaveProperty('enabled')
+  })
+
   it('de-duplicates admin function names before saving', () => {
     const r = parseImport(
       JSON.stringify({

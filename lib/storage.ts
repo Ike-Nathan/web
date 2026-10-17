@@ -108,7 +108,8 @@ export function pruneOldAlerts() {
   if (!storage) return
   const cutoff = Date.now() - getRetentionDays() * 24 * 60 * 60 * 1000
   const alerts = load<AlertPayload>(ALERTS_KEY)
-  const pruned = alerts.filter((a) => a.timestamp >= cutoff)
+  const withinRetention = alerts.filter((a) => a.timestamp >= cutoff)
+  const pruned = capAlertsPerContract(withinRetention)
   if (pruned.length < alerts.length) {
     try {
       storage.setItem(ALERTS_KEY, JSON.stringify(pruned))
@@ -118,13 +119,21 @@ export function pruneOldAlerts() {
   }
 }
 
-function trimAlertsToCutoff(cutoff: number) {
+// Trims alerts to the user's retention window and per-contract cap, dropping
+// the oldest alerts first. Used when storage is near quota.
+function trimAlertsToRetention() {
   const storage = getStorage()
   if (!storage) return
   const alerts = load<AlertPayload>(ALERTS_KEY)
-  const trimmed = alerts.filter((a) => a.timestamp >= cutoff)
+  const cutoff = Date.now() - getRetentionDays() * 24 * 60 * 60 * 1000
+  const withinRetention = alerts.filter((a) => a.timestamp >= cutoff)
+  const trimmed = capAlertsPerContract(withinRetention)
   if (trimmed.length < alerts.length) {
-    storage.setItem(ALERTS_KEY, JSON.stringify(trimmed))
+    try {
+      storage.setItem(ALERTS_KEY, JSON.stringify(trimmed))
+    } catch {
+      // best effort
+    }
   }
 }
 
@@ -147,7 +156,7 @@ function writeItem(storage: Storage, key: string, value: string): boolean {
   } catch (err) {
     if (!isQuotaError(err)) return false
   }
-  pruneOldAlerts()
+  trimAlertsToRetention()
   try {
     storage.setItem(key, value)
     return true
@@ -171,15 +180,12 @@ function saveInternal<T>(key: string, data: T[]): boolean {
   const storage = getStorage()
   if (!storage) return false
 
-  if (key !== ALERTS_KEY) {
-    pruneOldAlerts()
-  }
-
   if (key === ALERTS_KEY) {
     const size = getStorageSize()
     if (size > STORAGE_QUOTA_BYTES * 0.9) {
-      const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000
-      data = (data as AlertPayload[]).filter((a) => a.timestamp >= cutoff) as unknown as T[]
+      const cutoff = Date.now() - getRetentionDays() * 24 * 60 * 60 * 1000
+      const withinRetention = (data as AlertPayload[]).filter((a) => a.timestamp >= cutoff)
+      data = capAlertsPerContract(withinRetention) as unknown as T[]
     }
     return writeItem(storage, key, JSON.stringify(data))
   }
@@ -188,8 +194,7 @@ function saveInternal<T>(key: string, data: T[]): boolean {
 
   const size = getStorageSize()
   if (size > STORAGE_QUOTA_BYTES * 0.9) {
-    const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000
-    trimAlertsToCutoff(cutoff)
+    trimAlertsToRetention()
   }
   return ok
 }
