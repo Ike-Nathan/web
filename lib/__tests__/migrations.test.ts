@@ -75,4 +75,15 @@ describe('migrations', () => {
       expect(migrations[v], `missing migration for version ${v}`).toBeTypeOf('function');
     }
   });
+
+  it('migrates legacy keys to the txwatch_ prefix', () => {
+    store['txwatch:notifications-enabled'] = 'true';
+    store['freighter_public_key'] = 'GABC123';
+    runMigrations();
+    expect(store['txwatch_notifications_enabled']).toBe('true');
+    expect(store['txwatch_freighter_public_key']).toBe('GABC123');
+    expect(store['txwatch:notifications-enabled']).toBeUndefined();
+    expect(store['freighter_public_key']).toBeUndefined();
+    expect(store['txwatch_storage_version']).toBe(String(CURRENT_STORAGE_VERSION));
+  });
 });

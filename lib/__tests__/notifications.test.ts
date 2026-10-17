@@ -9,6 +9,7 @@ import {
   NOTIFY_THROTTLE_MS,
 } from '@/lib/notifications'
 import NotificationToggle from '@/components/NotificationToggle'
+import { NOTIFICATIONS_KEY } from '@/lib/storageKeys'
 import type { AlertPayload } from '@/types'
 
 const alert = (h: string): AlertPayload => ({
@@ -53,7 +54,7 @@ describe('notifications', () => {
   it('requests permission on enable and stores preference', async () => {
     mockNotification('default', 'granted')
     expect(await enableNotifications()).toBe(true)
-    expect(localStorage.getItem('txwatch:notifications-enabled')).toBe('1')
+    expect(localStorage.getItem(NOTIFICATIONS_KEY)).toBe('1')
   })
 
   it('does not enable when denied', async () => {
@@ -132,7 +133,7 @@ describe('notifications', () => {
 
   it('turns the toggle off when notification permission is revoked', async () => {
     mockNotification('granted')
-    localStorage.setItem('txwatch:notifications-enabled', '1')
+    localStorage.setItem(NOTIFICATIONS_KEY, '1')
     const originalPermissions = Object.getOwnPropertyDescriptor(
       navigator,
       'permissions'

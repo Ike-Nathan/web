@@ -9,6 +9,17 @@ export interface StorageErrorContext {
 
 const errorHandlers: StorageErrorHandler[] = [];
 
+let lastStorageError: StorageErrorContext | null = null;
+
+/**
+ * Returns the most recent storage error reported via `emitStorageError`,
+ * or `null` if no storage error has occurred yet. Used by the error
+ * boundary to target only the corrupted key when offering a scoped reset.
+ */
+export function getLastStorageError(): StorageErrorContext | null {
+  return lastStorageError;
+}
+
 export function onStorageError(handler: StorageErrorHandler): void {
   errorHandlers.push(handler);
 }
@@ -18,6 +29,8 @@ export function clearStorageErrorHandlers(): void {
 }
 
 function emitStorageError(ctx: StorageErrorContext): void {
+  lastStorageError = ctx;
+
   const isDev =
     typeof process !== 'undefined'
       ? process.env.NODE_ENV !== 'production'

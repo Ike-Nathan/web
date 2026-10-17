@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { getRetentionDays, setRetentionDays } from '@/lib/storage'
+import { ALERTS_KEY } from '@/lib/storageKeys'
 
 export default function RetentionSetting() {
   const [days, setDays] = useState(() => getRetentionDays())
@@ -12,7 +13,7 @@ export default function RetentionSetting() {
   const countAlertsOlderThan = (retentionDays: number): number => {
     if (typeof window === 'undefined') return 0
     try {
-      const raw = window.localStorage.getItem('alerts')
+      const raw = window.localStorage.getItem(ALERTS_KEY)
       if (!raw) return 0
       const alerts = JSON.parse(raw)
       if (!Array.isArray(alerts)) return 0

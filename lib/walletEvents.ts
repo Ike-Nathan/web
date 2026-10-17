@@ -13,8 +13,10 @@
  * `txwatch:wallet` CustomEvent. `useWalletState` is the React binding for it.
  */
 
+import { FREIGHTER_PUBLIC_KEY } from '@/lib/storageKeys'
+
 export const WALLET_EVENT = 'txwatch:wallet'
-export const WALLET_STORAGE_KEY = 'freighter_public_key'
+export const WALLET_STORAGE_KEY = FREIGHTER_PUBLIC_KEY
 
 export interface WalletChangeDetail {
   publicKey: string | null

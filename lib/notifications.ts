@@ -1,6 +1,7 @@
 import type { AlertPayload } from '@/types'
+import { NOTIFICATIONS_KEY } from '@/lib/storageKeys'
 
-export const NOTIFICATIONS_KEY = 'txwatch:notifications-enabled'
+export { NOTIFICATIONS_KEY }
 export const NOTIFY_THROTTLE_MS = 10000
 
 interface ContractNotificationState {

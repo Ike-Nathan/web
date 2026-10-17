@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { getContracts } from '@/lib/storage'
+import { getContracts, exportAllStorageData } from '@/lib/storage'
 import { syncSaveContract, syncDeleteContract } from '@/lib/sync'
 import {
   buildBackup,
@@ -41,7 +41,7 @@ export default function ContractImportExport() {
     const contracts = getContracts()
     const payload =
       exportMode === 'everything'
-        ? buildBackup(contracts, gatherAlerts(), gatherSettings())
+        ? buildBackup(contracts, gatherAlerts(), gatherSettings(), exportAllStorageData())
         : buildSnapshot(contracts)
     const json = JSON.stringify(payload, null, 2)
     const url = URL.createObjectURL(new Blob([json], { type: 'application/json' }))

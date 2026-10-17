@@ -13,6 +13,7 @@ import {
   updateContract,
   removeContract,
 } from '@/lib/contractsApi'
+import { CONTRACTS_KEY, SYNC_STATUS_KEY } from '@/lib/storageKeys'
 
 export type SyncState = 'synced' | 'error'
 export interface SyncStatus {
@@ -21,10 +22,8 @@ export interface SyncStatus {
   at: number
 }
 
-const STATUS_KEY = 'txwatch_sync_status'
-
 /** Storage key used by the local contract cache; storage events on it signal cross-tab changes. */
-export const CONTRACTS_STORAGE_KEY = 'txwatch_contracts'
+export const CONTRACTS_STORAGE_KEY = CONTRACTS_KEY
 
 /**
  * Re-exported from the storage layer so callers get a subscription that fires
@@ -34,7 +33,7 @@ export { onContractsChange }
 
 export function getSyncStatuses(): Record<string, SyncStatus> {
   try {
-    return JSON.parse(localStorage.getItem(STATUS_KEY) ?? '{}')
+    return JSON.parse(localStorage.getItem(SYNC_STATUS_KEY) ?? '{}')
   } catch {
     return {}
   }
@@ -45,7 +44,7 @@ function setStatus(id: string, status: SyncStatus | null) {
     const all = getSyncStatuses()
     if (status) all[id] = status
     else delete all[id]
-    localStorage.setItem(STATUS_KEY, JSON.stringify(all))
+    localStorage.setItem(SYNC_STATUS_KEY, JSON.stringify(all))
   } catch {
     // status is best-effort
   }

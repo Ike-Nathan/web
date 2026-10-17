@@ -13,6 +13,7 @@ import {
   DuplicateContractError,
 } from '../storage';
 import { onStorageError, clearStorageErrorHandlers } from '../storageLogger';
+import { STORAGE_KEYS } from '@/lib/storageKeys';
 
 const localStorageMock = (() => {
   let store: Record<string, string> = {};
@@ -171,14 +172,14 @@ describe('corrupted / non-array storage values', () => {
 
   for (const [name, raw] of cases) {
     it(`returns [] for a stored ${name} value`, () => {
-      localStorage.setItem('txwatch_contracts', raw);
+      localStorage.setItem(STORAGE_KEYS.contracts, raw);
       expect(getContracts()).toEqual([]);
     });
   }
 
   it('drops array entries that fail the minimal shape check', () => {
     localStorage.setItem(
-      'txwatch_contracts',
+      STORAGE_KEYS.contracts,
       JSON.stringify([contract1, { id: 'bad' }, null, 'nope', 7]),
     );
     const contracts = getContracts();
@@ -189,9 +190,9 @@ describe('corrupted / non-array storage values', () => {
   it('reports corrupted and dropped entries via storageLogger', () => {
     const events: unknown[] = [];
     const off = onStorageError((e) => events.push(e));
-    localStorage.setItem('txwatch_contracts', '{}');
+    localStorage.setItem(STORAGE_KEYS.contracts, '{}');
     getContracts();
-    localStorage.setItem('txwatch_contracts', JSON.stringify([contract1, { id: 'bad' }]));
+    localStorage.setItem(STORAGE_KEYS.contracts, JSON.stringify([contract1, { id: 'bad' }]));
     getContracts();
     off();
     clearStorageErrorHandlers();
@@ -296,14 +297,14 @@ describe('alert retention pruning', () => {
 
   it('prunes on addAlert without any contract save', async () => {
     const s = await import('../storage')
-    localStorage.setItem('txwatch_alerts', JSON.stringify([alert(100)]))
+    localStorage.setItem(STORAGE_KEYS.alerts, JSON.stringify([alert(100)]))
     s.addAlert(alert(1))
     expect(s.getAlerts('CX', 'testnet')).toHaveLength(1)
   })
 
   it('honours configurable retention', async () => {
     const s = await import('../storage')
-    localStorage.setItem('txwatch_alerts', JSON.stringify([alert(10), alert(1)]))
+    localStorage.setItem(STORAGE_KEYS.alerts, JSON.stringify([alert(10), alert(1)]))
     s.setRetentionDays(5)
     expect(s.getRetentionDays()).toBe(5)
     expect(s.getAlerts('CX', 'testnet')).toHaveLength(1)
@@ -369,7 +370,7 @@ describe('retention commit semantics', () => {
 
   it('does not prune on intermediate keystrokes, only on commit', async () => {
     const s = await import('../storage')
-    localStorage.setItem('txwatch_alerts', JSON.stringify([alert(100), alert(10), alert(1)]))
+    localStorage.setItem(STORAGE_KEYS.alerts, JSON.stringify([alert(100), alert(10), alert(1)]))
     // Simulate typing "1" then "18" then "180" without committing.
     s.previewRetentionDays(1)
     s.previewRetentionDays(18)
@@ -383,7 +384,7 @@ describe('retention commit semantics', () => {
 
   it('reports how many alerts a shrink would delete', async () => {
     const s = await import('../storage')
-    localStorage.setItem('txwatch_alerts', JSON.stringify([alert(100), alert(10), alert(1)]))
+    localStorage.setItem(STORAGE_KEYS.alerts, JSON.stringify([alert(100), alert(10), alert(1)]))
     expect(s.countAlertsOlderThan(5)).toBe(2)
   })
 })
@@ -436,10 +437,49 @@ describe('corrupted storage', () => {
   it('triggers the registered storage error handler and returns []', () => {
     const keys: string[] = [];
     onStorageError((ctx) => keys.push(ctx.key));
-    localStorage.setItem('txwatch_contracts', '{broken');
+    localStorage.setItem(STORAGE_KEYS.contracts, '{broken');
     expect(getContracts()).toEqual([]);
-    expect(keys).toEqual(['txwatch_contracts']);
+    expect(keys).toEqual([STORAGE_KEYS.contracts]);
     clearStorageErrorHandlers();
+  });
+});
+
+describe('clearTxWatchStorage', () => {
+  it('removes only TxWatch keys and leaves unrelated origin keys intact', async () => {
+    const s = await import('../storage');
+    localStorage.setItem(STORAGE_KEYS.contracts, JSON.stringify([contract1]));
+    localStorage.setItem(STORAGE_KEYS.alerts, JSON.stringify([alert1]));
+    localStorage.setItem(STORAGE_KEYS.preferences, '{}');
+    localStorage.setItem('other_app_key', 'keep-me');
+    s.clearTxWatchStorage();
+    expect(localStorage.getItem(STORAGE_KEYS.contracts)).toBeNull();
+    expect(localStorage.getItem(STORAGE_KEYS.alerts)).toBeNull();
+    expect(localStorage.getItem(STORAGE_KEYS.preferences)).toBeNull();
+    expect(localStorage.getItem('other_app_key')).toBe('keep-me');
+  });
+
+  it('removes only the specified key when given one', async () => {
+    const s = await import('../storage');
+    localStorage.setItem(STORAGE_KEYS.contracts, '{broken');
+    localStorage.setItem(STORAGE_KEYS.alerts, JSON.stringify([alert1]));
+    s.clearTxWatchStorage([STORAGE_KEYS.contracts]);
+    expect(localStorage.getItem(STORAGE_KEYS.contracts)).toBeNull();
+    expect(localStorage.getItem(STORAGE_KEYS.alerts)).not.toBeNull();
+  });
+});
+
+describe('exportAllStorageData', () => {
+  it('returns the registry keys that are present in storage', async () => {
+    const s = await import('../storage');
+    localStorage.setItem(STORAGE_KEYS.contracts, JSON.stringify([contract1]));
+    localStorage.setItem(STORAGE_KEYS.alerts, JSON.stringify([alert1]));
+    localStorage.setItem('other_app_key', 'nope');
+    const data = s.exportAllStorageData();
+    expect(Object.keys(data)).toEqual(
+      expect.arrayContaining([STORAGE_KEYS.contracts, STORAGE_KEYS.alerts]),
+    );
+    expect(data[STORAGE_KEYS.contracts]).toBe(JSON.stringify([contract1]));
+    expect(data).not.toHaveProperty('other_app_key');
   });
 });
 

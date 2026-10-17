@@ -1,10 +1,19 @@
 import { WatchedContract, AlertPayload, AlertRule, Network, parseAlertRule } from '@/types'
 import { HORIZON_URLS } from './stellar'
 import { safeParseStorage, storageLogger } from './storageLogger'
+import {
+  CONTRACTS_KEY,
+  ALERTS_KEY,
+  STORAGE_VERSION_KEY,
+  RETENTION_KEY,
+  ALERT_CAP_KEY,
+  NOTIFICATION_PREF_KEY,
+  VIEW_PREFERENCES_KEY,
+  TXWATCH_KEYS,
+} from './storageKeys'
 
-export const CONTRACTS_KEY = 'txwatch_contracts'
-const ALERTS_KEY = 'txwatch_alerts'
-const STORAGE_VERSION_KEY = 'txwatch_storage_version'
+export { CONTRACTS_KEY }
+
 const CURRENT_STORAGE_VERSION = 2
 const STORAGE_EVENT = 'txwatch:storage'
 
@@ -62,8 +71,6 @@ function load<T>(key: string): T[] {
 const STORAGE_QUOTA_BYTES = 5 * 1024 * 1024 // 5MB typical limit
 const MAX_ALERTS_PER_CONTRACT = 500
 const DEFAULT_RETENTION_DAYS = 90
-const RETENTION_KEY = 'txwatch_alert_retention_days'
-const ALERT_CAP_KEY = 'txwatch_alert_cap_per_contract'
 
 export function getRetentionDays(): number {
   const raw = Number(getStorage()?.getItem(RETENTION_KEY))
@@ -343,9 +350,6 @@ export function rekeyAlerts(oldContractId: string, newContractId: string): boole
   return save(ALERTS_KEY, next)
 }
 
-const NOTIFICATION_PREF_KEY = 'txwatch_notification_preference'
-const VIEW_PREFERENCES_KEY = 'txwatch_view_preferences'
-
 export interface ViewPreferences {
   [key: string]: unknown
 }
@@ -411,6 +415,43 @@ export function seedMockAlerts(
       timestamp: now - index * 15 * 60 * 1000,
       horizon_link: `${HORIZON_URLS[network]}/transactions/${hash}`,
     })
+  }
+}
+
+// Reads every TxWatch key from the registry into a plain object for backup/export.
+// Returns only the keys that are actually present in storage.
+export function exportAllStorageData(): Record<string, string> {
+  const storage = getStorage()
+  const data: Record<string, string> = {}
+  if (!storage) return data
+  for (const key of TXWATCH_KEYS) {
+    const value = storage.getItem(key)
+    if (value !== null) data[key] = value
+  }
+  return data
+}
+
+// Removes only the given registry keys (or every TxWatch key when none are given)
+// from localStorage and sessionStorage. Never calls clear(), so data belonging to
+// other apps on the same origin is preserved.
+export function clearTxWatchStorage(keys: string[] = TXWATCH_KEYS): void {
+  const targets = keys.filter((key) => TXWATCH_KEYS.includes(key))
+  const stores: Storage[] = []
+  if (typeof window !== 'undefined') {
+    stores.push(window.localStorage, window.sessionStorage)
+  } else {
+    const g = globalThis as unknown as { localStorage?: Storage; sessionStorage?: Storage }
+    if (g.localStorage) stores.push(g.localStorage)
+    if (g.sessionStorage) stores.push(g.sessionStorage)
+  }
+  for (const storage of stores) {
+    for (const key of targets) {
+      try {
+        storage.removeItem(key)
+      } catch {
+        // best effort
+      }
+    }
   }
 }
 
