@@ -14,6 +14,8 @@ import {
 } from '../storage';
 import { onStorageError, clearStorageErrorHandlers } from '../storageLogger';
 import { STORAGE_KEYS } from '@/lib/storageKeys';
+import { deleteAlertsByNetwork } from '../storage'
+
 
 const localStorageMock = (() => {
   let store: Record<string, string> = {};
@@ -492,3 +494,35 @@ describe('alerts keyed by (contract_id, network)', () => {
   });
 });
 /* … truncated 1606 chars — edit only what you need near the top … */
+
+
+
+describe('deleteAlertsByNetwork (Issue #203)', () => {
+  beforeEach(() => {
+    localStorage.clear()
+  })
+
+  it('removes alerts only for the specified network on a contract', async () => {
+    const s = await import('../storage')
+    const baseAlert = {
+      label: 'Test',
+      rule_triggered: 'AnyTransaction',
+      transaction_hash: 'abc',
+      timestamp: Date.now(),
+      horizon_link: ''
+    }
+
+    s.addAlert({ ...baseAlert, id: '1', contract_id: 'C123', network: 'testnet' })
+    s.addAlert({ ...baseAlert, id: '2', contract_id: 'C123', network: 'mainnet' })
+    s.addAlert({ ...baseAlert, id: '3', contract_id: 'C999', network: 'testnet' })
+
+    deleteAlertsByNetwork('C123', 'testnet')
+
+    const alertsC123 = s.getAlerts('C123')
+    expect(alertsC123).toHaveLength(1)
+    expect(alertsC123[0].network).toBe('mainnet')
+
+    const alertsC999 = s.getAlerts('C999')
+    expect(alertsC999).toHaveLength(1)
+  })
+})
