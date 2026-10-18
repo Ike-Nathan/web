@@ -9,7 +9,7 @@ import { refreshContracts } from '@/lib/contractSync'
 import ContractCard from '@/components/ContractCard'
 import EmptyState from '@/components/EmptyState'
 import ContractsSkeleton from '@/components/ContractsSkeleton'
-import { NETWORK_COLORS } from '@/components/NetworkBadge'
+import { networkDotColors } from '@/components/NetworkBadge'
 
 type ViewMode = 'flat' | 'grouped'
 type NetworkFilter = 'all' | Network
@@ -340,14 +340,18 @@ export default function ContractsPage() {
           ))}
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <label htmlFor="contract-sort" className="sr-only">
             Sort contracts
           </label>
           <select
             id="contract-sort"
             value={sortBy}
-            onChange={(event) => setSortBy(event.target.value as SortOption)}
+            onChange={(event) => {
+              const next = event.target.value as SortOption
+              setSortBy(next)
+              writePrefs({ sortBy: next })
+            }}
             className="rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 focus:border-indigo-500 focus:outline-none"
           >
             {SORT_OPTIONS.map((option) => (
@@ -357,13 +361,33 @@ export default function ContractsPage() {
             ))}
           </select>
 
-          <button
-            type="button"
-            onClick={() => setViewMode((prev) => (prev === 'flat' ? 'grouped' : 'flat'))}
-            className="rounded-lg bg-zinc-800 px-3 py-2 text-sm font-medium text-zinc-100 hover:bg-zinc-700"
+          <div
+            className="flex items-center gap-1 rounded-lg border border-zinc-800 bg-zinc-900 p-1"
+            role="group"
+            aria-label="View mode"
           >
-            {viewMode === 'flat' ? 'Group by network' : 'Flat view'}
-          </button>
+            {VIEW_MODES.map((mode) => {
+              const isActive = viewMode === mode
+              return (
+                <button
+                  key={mode}
+                  type="button"
+                  onClick={() => {
+                    setViewMode(mode)
+                    writePrefs({ viewMode: mode })
+                  }}
+                  aria-pressed={isActive}
+                  className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+                    isActive
+                      ? 'bg-indigo-600 text-white'
+                      : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800'
+                  }`}
+                >
+                  {mode === 'flat' ? 'Flat' : 'Grouped'}
+                </button>
+              )
+            })}
+          </div>
 
           <button
             type="button"
@@ -376,83 +400,6 @@ export default function ContractsPage() {
           >
             {selectionMode ? 'Cancel' : 'Select'}
           </button>
-        <div className="flex items-center gap-3">
-          {hasAnyContracts && (
-            <div className="relative">
-              <select
-                value={sortBy}
-                onChange={(e) => setSortBy(e.target.value as SortOption)}
-                className="appearance-none px-3 py-2 pr-8 rounded-lg bg-zinc-800 border border-zinc-700 text-sm font-medium text-zinc-200 hover:bg-zinc-750 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-colors cursor-pointer"
-                onChange={(e) => {
-                  const next = e.target.value as SortOption
-                  setSortBy(next)
-                  writePrefs({ sortBy: next })
-                }}
-                className="appearance-none px-3 py-2 pr-8 rounded-lg bg-zinc-800 border border-zinc-700 text-sm font-medium text-zinc-200 hover:bg-zinc-700 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
-              >
-                {SORT_OPTIONS.map(({ value, label }) => (
-                  <option key={value} value={value}>
-                    {label}
-                  </option>
-                ))}
-              </select>
-              <span className="pointer-events-none absolute inset-y-0 right-2 flex items-center text-zinc-500">
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                </svg>
-              </span>
-            </div>
-          )}
-
-          <div className="flex items-center gap-1 p-1 bg-zinc-900 border border-zinc-800 rounded-lg" role="group" aria-label="View mode">
-            <button
-              onClick={() => setViewMode('flat')}
-              aria-pressed={viewMode === 'flat'}
-              className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
-                viewMode === 'flat'
-                  ? 'bg-indigo-600 text-white'
-                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800'
-              }`}
-            >
-              Flat
-            </button>
-            <button
-              onClick={() => setViewMode('grouped')}
-              aria-pressed={viewMode === 'grouped'}
-              className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
-                viewMode === 'grouped'
-                  ? 'bg-indigo-600 text-white'
-                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800'
-              }`}
-            >
-              Grouped
-            </button>
-          </div>
-            </div>
-          )}
-
-          <div className="flex items-center gap-1 p-1 bg-zinc-900 border border-zinc-800 rounded-lg w-fit" role="group" aria-label="View mode">
-            {VIEW_MODES.map((mode) => {
-              const isActive = viewMode === mode
-              return (
-                <button
-                  key={mode}
-                  onClick={() => {
-                    setViewMode(mode)
-                    writePrefs({ viewMode: mode })
-                  }}
-                  aria-pressed={isActive}
-                  className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
-                    isActive
-                      ? 'bg-indigo-600 text-white'
-                      : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800'
-                  }`}
-                >
-                  {mode === 'flat' ? 'Flat' : 'Grouped'}
-                </button>
-              )
-            })}
-          </div>
         </div>
       </div>
 
@@ -498,75 +445,24 @@ export default function ContractsPage() {
           description="Try adjusting your search or filters."
         />
       ) : viewMode === 'flat' ? (
-        <>
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {paginated.map((contract) => (
-              <ContractCard
-                key={contract.id}
-                contract={contract}
-                highlighted={contract.id === highlightedId}
-              />
-            ))}
-          </div>
-
-          {totalPages > 1 && (
-            <div className="flex items-center justify-center gap-2">
-              <button
-                onClick={() => setPage((p) => Math.max(1, p - 1))}
-                disabled={page === 1}
-                className="px-3 py-1.5 rounded-lg bg-zinc-800 text-sm font-medium text-zinc-200 hover:bg-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                Previous
-              </button>
-              <span className="text-sm text-zinc-500">
-                Page {page} of {totalPages}
-              </span>
-              <button
-                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                disabled={page === totalPages}
-                className="px-3 py-1.5 rounded-lg bg-zinc-800 text-sm font-medium text-zinc-200 hover:bg-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                Next
-              </button>
-            </div>
-          )}
-        </>
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {paginated.map((contract) => (
+            <ContractCard
+              key={contract.id}
+              contract={contract}
+              highlight={contract.id === highlightedId}
+              selectable={selectionMode}
+              selected={selectedIds.includes(contract.id)}
+              onToggleSelect={toggleSelected}
+            />
+          ))}
+        </div>
       ) : (
         <div className="space-y-8">
           {(Object.keys(grouped) as Network[]).map((network) => {
             const contracts = grouped[network]
             if (contracts.length === 0) return null
             return (
-              <div key={network} className="space-y-4">
-                <h2 className="text-lg font-semibold text-zinc-200">
-                  {NETWORK_LABELS[network]}
-                  <span className="ml-2 text-sm font-normal text-zinc-500">
-                    {contracts.length}
-                  </span>
-                </h2>
-                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                  {contracts.map((contract) => (
-                    <ContractCard
-                      key={contract.id}
-                      contract={contract}
-                      highlighted={contract.id === highlightedId}
-                    />
-                  ))}
-                </div>
-              </div>
-            )
-          })}
-          description="Try adjusting your search or network filter."
-        />
-      ) : viewMode === 'grouped' ? (
-        <div className="space-y-8">
-          {(Object.keys(grouped) as Network[]).map((network) => {
-            const contracts = grouped[network]
-            if (contracts.length === 0) return null
-            return (
-              <div key={network} className="space-y-3">
-                <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">
-                  {NETWORK_LABELS[network]}
               <section key={network} className="space-y-3">
                 <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-400">
                   {NETWORK_LABELS[network]}
@@ -577,33 +473,20 @@ export default function ContractsPage() {
                     <ContractCard
                       key={contract.id}
                       contract={contract}
-                      highlighted={contract.id === highlightedId}
-                      selectionMode={selectionMode}
+                      highlight={contract.id === highlightedId}
+                      selectable={selectionMode}
                       selected={selectedIds.includes(contract.id)}
-                      onToggleSelected={toggleSelected}
+                      onToggleSelect={toggleSelected}
                     />
                   ))}
                 </div>
-              </div>
+              </section>
             )
           })}
         </div>
-      ) : (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {paginated.map((contract) => (
-            <ContractCard
-              key={contract.id}
-              contract={contract}
-              highlighted={contract.id === highlightedId}
-              selectionMode={selectionMode}
-              selected={selectedIds.includes(contract.id)}
-              onToggleSelected={toggleSelected}
-            />
-          ))}
-        </div>
       )}
 
-      {viewMode === 'flat' && totalPages > 1 && (
+      {totalPages > 1 && (
         <div className="flex items-center justify-center gap-2">
           <button
             type="button"
@@ -614,13 +497,6 @@ export default function ContractsPage() {
             Previous
           </button>
           <span className="text-sm text-zinc-400">
-            onClick={() => setPage((p) => Math.max(1, p - 1))}
-            disabled={page === 1}
-            className="px-3 py-1.5 rounded-lg bg-zinc-800 text-sm text-zinc-200 hover:bg-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            Previous
-          </button>
-          <span className="text-sm text-zinc-500">
             Page {page} of {totalPages}
           </span>
           <button
@@ -628,9 +504,6 @@ export default function ContractsPage() {
             onClick={() => setPage((prev) => Math.min(totalPages, prev + 1))}
             disabled={page === totalPages}
             className="rounded-lg bg-zinc-800 px-3 py-2 text-sm text-zinc-100 hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-50"
-            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-            disabled={page === totalPages}
-            className="px-3 py-1.5 rounded-lg bg-zinc-800 text-sm text-zinc-200 hover:bg-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed"
           >
             Next
           </button>
