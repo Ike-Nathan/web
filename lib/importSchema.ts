@@ -67,9 +67,9 @@ const NETWORKS: Network[] = ['mainnet', 'testnet', 'futurenet']
  * Returns the cleaned list or an error message naming the rejected values.
  */
 function normalizeFunctionNames(names: string[]): string[] | string {
-  const { valid, rejected } = sanitizeAdminFunctionNames(names)
-  if (rejected.length > 0) {
-    return `invalid function name(s): ${rejected.map((n) => `"${n}"`).join(', ')}`
+  const { valid, invalid } = sanitizeAdminFunctionNames(names)
+  if (invalid.length > 0) {
+    return `invalid function name(s): ${invalid.map((n) => `"${n}"`).join(', ')}`
   }
   return valid
 }
@@ -89,23 +89,32 @@ export const DEFAULT_BACKUP_SETTINGS: BackupSettings = {
   viewPreferences: {},
 }
 
-const NOTIFICATION_PREFERENCES: NotificationPreference[] = ['all', 'alerts', 'none']
+const NOTIFICATION_PREFERENCES: NotificationPreference[] = [
+  'all',
+  'alerts',
+  'none',
+]
 
 /** Normalizes unknown settings input, falling back to defaults per field. */
 export function normalizeSettings(input: unknown): BackupSettings {
-  if (typeof input !== 'object' || input === null) return { ...DEFAULT_BACKUP_SETTINGS }
+  if (typeof input !== 'object' || input === null)
+    return { ...DEFAULT_BACKUP_SETTINGS }
   const s = input as Record<string, unknown>
   const retentionDays =
-    typeof s.retentionDays === 'number' && Number.isFinite(s.retentionDays) && s.retentionDays >= 0
+    typeof s.retentionDays === 'number' &&
+    Number.isFinite(s.retentionDays) &&
+    s.retentionDays >= 0
       ? s.retentionDays
       : DEFAULT_BACKUP_SETTINGS.retentionDays
   const notificationPreference = NOTIFICATION_PREFERENCES.includes(
-    s.notificationPreference as NotificationPreference,
+    s.notificationPreference as NotificationPreference
   )
     ? (s.notificationPreference as NotificationPreference)
     : DEFAULT_BACKUP_SETTINGS.notificationPreference
   const viewPreferences =
-    typeof s.viewPreferences === 'object' && s.viewPreferences !== null && !Array.isArray(s.viewPreferences)
+    typeof s.viewPreferences === 'object' &&
+    s.viewPreferences !== null &&
+    !Array.isArray(s.viewPreferences)
       ? (s.viewPreferences as ViewPreferences)
       : { ...DEFAULT_BACKUP_SETTINGS.viewPreferences }
   return { retentionDays, notificationPreference, viewPreferences }
@@ -114,7 +123,7 @@ export function normalizeSettings(input: unknown): BackupSettings {
 export function buildBackup(
   contracts: WatchedContract[],
   alerts: AlertHistoryEntry[],
-  settings: BackupSettings,
+  settings: BackupSettings
 ): BackupSnapshotV2 {
   return {
     version: 2,
@@ -130,10 +139,16 @@ export function validateAlertEntry(entry: unknown): AlertHistoryEntry | null {
   if (typeof entry !== 'object' || entry === null) return null
   const e = entry as Record<string, unknown>
   if (typeof e.contract_id !== 'string' || !e.contract_id) return null
-  if (typeof e.timestamp !== 'number' || !Number.isFinite(e.timestamp)) return null
-  const result: AlertHistoryEntry = { ...e, contract_id: e.contract_id, timestamp: e.timestamp }
+  if (typeof e.timestamp !== 'number' || !Number.isFinite(e.timestamp))
+    return null
+  const result: AlertHistoryEntry = {
+    ...e,
+    contract_id: e.contract_id,
+    timestamp: e.timestamp,
+  }
   if (typeof e.id === 'string' && e.id) result.id = e.id
-  if (NETWORKS.includes(e.network as Network)) result.network = e.network as Network
+  if (NETWORKS.includes(e.network as Network))
+    result.network = e.network as Network
   return result
 }
 
@@ -143,8 +158,10 @@ function validateRule(rule: unknown): AlertRule | string {
   if (!isAlertRuleType(type)) return `unknown rule type "${String(type)}"`
   const parsed = parseAlertRule(rule)
   if (!parsed) {
-    if (type === 'LargeTransfer') return 'threshold_xlm must be a non-negative number'
-    if (type === 'AdminFunctionCalled') return 'function_names must be an array of strings'
+    if (type === 'LargeTransfer')
+      return 'threshold_xlm must be a non-negative number'
+    if (type === 'AdminFunctionCalled')
+      return 'function_names must be an array of strings'
     return 'function_name must be a non-empty string'
   }
   if (parsed.type === 'AdminFunctionCalled') {
@@ -156,12 +173,17 @@ function validateRule(rule: unknown): AlertRule | string {
 }
 
 /** Returns a normalized contract or an error message for a single entry. */
-export function validateContractEntry(entry: unknown): WatchedContract | string {
-  if (typeof entry !== 'object' || entry === null) return 'entry must be an object'
+export function validateContractEntry(
+  entry: unknown
+): WatchedContract | string {
+  if (typeof entry !== 'object' || entry === null)
+    return 'entry must be an object'
   const e = entry as Record<string, unknown>
-  if (typeof e.contract_id !== 'string' || !isValidContractId(e.contract_id)) return 'invalid contract_id'
+  if (typeof e.contract_id !== 'string' || !isValidContractId(e.contract_id))
+    return 'invalid contract_id'
   if (!NETWORKS.includes(e.network as Network)) return 'invalid network'
-  if (typeof e.webhook_url !== 'string' || !isValidUrl(e.webhook_url)) return 'invalid webhook_url'
+  if (typeof e.webhook_url !== 'string' || !isValidUrl(e.webhook_url))
+    return 'invalid webhook_url'
   if (!Array.isArray(e.rules)) return 'rules must be an array'
   const rules: AlertRule[] = []
   for (const rule of e.rules) {
@@ -171,8 +193,10 @@ export function validateContractEntry(entry: unknown): WatchedContract | string 
   }
   const now = Date.now()
   const contract: WatchedContract = {
-    id: typeof e.id === 'string' && e.id ? e.id : `${e.contract_id}:${e.network}`,
-    label: typeof e.label === 'string' && e.label.trim() ? e.label : e.contract_id,
+    id:
+      typeof e.id === 'string' && e.id ? e.id : `${e.contract_id}:${e.network}`,
+    label:
+      typeof e.label === 'string' && e.label.trim() ? e.label : e.contract_id,
     contract_id: e.contract_id,
     network: e.network as Network,
     rules,
@@ -197,12 +221,14 @@ export function parseImport(json: string): ImportParseResult {
     throw new Error('Invalid JSON: cannot parse contract snapshot')
   }
   const isArray = Array.isArray(parsed)
-  const envelope = isArray ? null : (parsed as { version?: unknown; contracts?: unknown } | null)
+  const envelope = isArray
+    ? null
+    : (parsed as { version?: unknown; contracts?: unknown } | null)
   const version = envelope?.version
   const list = isArray ? parsed : envelope?.contracts
   if (!Array.isArray(list) || (!isArray && version !== 1 && version !== 2)) {
     throw new Error(
-      'Invalid snapshot format: expected { version: 1, contracts: [...] } or { version: 2, contracts, alerts, settings }',
+      'Invalid snapshot format: expected { version: 1, contracts: [...] } or { version: 2, contracts, alerts, settings }'
     )
   }
   const contracts: WatchedContract[] = []
@@ -222,7 +248,9 @@ export function parseImport(json: string): ImportParseResult {
       if (result) alerts.push(result)
     }
   }
-  const settings = normalizeSettings((envelope as { settings?: unknown }).settings)
+  const settings = normalizeSettings(
+    (envelope as { settings?: unknown }).settings
+  )
   return { contracts, errors, alerts, settings }
 }
 
@@ -240,7 +268,7 @@ export function planImport(
   existing: WatchedContract[],
   incoming: WatchedContract[],
   mode: ImportMode,
-  duplicates: DuplicateStrategy,
+  duplicates: DuplicateStrategy
 ): ImportPlan {
   const key = (c: WatchedContract) => `${c.network}:${c.contract_id}`
   const byKey = new Map(existing.map((c) => [key(c), c]))
