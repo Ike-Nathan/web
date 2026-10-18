@@ -9,20 +9,45 @@ const MOCK_PUBLIC_KEY =
   'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
 const TRUNCATED_KEY = /GAAA\.\.\.AAAA/
 
+const freighterApiMock = vi.hoisted(() => ({
+  isConnected: vi.fn(),
+  getPublicKey: vi.fn(),
+  getNetwork: vi.fn(),
+  requestAccess: vi.fn(),
+  signTransaction: vi.fn(),
+}))
+
+vi.mock('@stellar/freighter-api', () => freighterApiMock)
+
 function mockFreighter(isConnected: boolean) {
-  window.freighter = {
-    isConnected: vi.fn().mockResolvedValue(isConnected),
-    getPublicKey: vi.fn().mockResolvedValue(MOCK_PUBLIC_KEY),
-    getNetwork: vi.fn().mockResolvedValue('TESTNET'),
-  }
+  freighterApiMock.isConnected.mockResolvedValue({ isConnected })
+  freighterApiMock.getPublicKey.mockResolvedValue({
+    publicKey: MOCK_PUBLIC_KEY,
+  })
+  freighterApiMock.getNetwork.mockResolvedValue({ network: 'TESTNET' })
+  freighterApiMock.requestAccess.mockResolvedValue({
+    publicKey: MOCK_PUBLIC_KEY,
+  })
+}
+
+function mockFreighterMissing() {
+  freighterApiMock.isConnected.mockResolvedValue({ isConnected: false })
+  freighterApiMock.getPublicKey.mockResolvedValue({
+    error: { message: 'Freighter is not installed' },
+  })
+  freighterApiMock.getNetwork.mockResolvedValue({
+    error: { message: 'Freighter is not installed' },
+  })
+  freighterApiMock.requestAccess.mockResolvedValue({
+    error: { message: 'Freighter is not installed' },
+  })
 }
 
 describe('wallet state broadcast', () => {
   beforeEach(() => {
-    delete window.freighter
-    delete window.__freighterPublicKey
     localStorage.clear()
     vi.clearAllMocks()
+    mockFreighterMissing()
   })
 
   // The header and the landing page each render their own FreighterConnect, so
@@ -44,7 +69,6 @@ describe('wallet state broadcast', () => {
     await waitFor(() => {
       expect(screen.getAllByText(TRUNCATED_KEY)).toHaveLength(2)
     })
-    expect(window.__freighterPublicKey).toBe(MOCK_PUBLIC_KEY)
 
     fireEvent.click(screen.getAllByRole('button', { name: 'Disconnect' })[0])
 
@@ -57,7 +81,6 @@ describe('wallet state broadcast', () => {
       ).toHaveLength(2)
     })
     expect(screen.queryByText(TRUNCATED_KEY)).not.toBeInTheDocument()
-    expect(window.__freighterPublicKey).toBeUndefined()
     expect(localStorage.getItem('freighter_public_key')).toBeNull()
   })
 
@@ -94,7 +117,6 @@ describe('wallet state broadcast', () => {
     expect(
       screen.queryAllByRole('button', { name: /Connect Freighter/ })
     ).toHaveLength(0)
-    expect(window.__freighterPublicKey).toBe(MOCK_PUBLIC_KEY)
   })
 
   it('re-opens the new-contract gate after a disconnect made elsewhere', async () => {
@@ -165,10 +187,70 @@ describe('wallet state broadcast', () => {
   })
 
   it('leaves the badge unavailable when the extension is missing', () => {
-    delete window.freighter
+    mockFreighterMissing()
 
     render(<WalletStatusBadge />)
 
     expect(screen.getByText('Unavailable')).toBeInTheDocument()
+  })
+
+  it('still broadcasts wallet changes when localStorage throws', async () => {
+    mockFreighter(true)
+
+    const setItemSpy = vi
+      .spyOn(Storage.prototype, 'setItem')
+      .mockImplementation(() => {
+        throw new Error('QuotaExceededError')
+      })
+    const removeItemSpy = vi
+      .spyOn(Storage.prototype, 'removeItem')
+      .mockImplementation(() => {
+        throw new Error('SecurityError')
+      })
+
+    const walletEvents: Array<{ publicKey: string | null }> = []
+    const listener = (event: Event) => {
+      walletEvents.push(
+        (event as CustomEvent<{ publicKey: string | null }>).detail
+      )
+    }
+    window.addEventListener('txwatch:wallet', listener)
+
+    try {
+      render(
+        <>
+          <WalletStatusBadge />
+          <FreighterConnect />
+          <FreighterConnect />
+        </>
+      )
+
+      await waitFor(() => {
+        expect(screen.getByText('Connected')).toBeInTheDocument()
+      })
+      await waitFor(() => {
+        expect(screen.getAllByText(TRUNCATED_KEY)).toHaveLength(2)
+      })
+
+      fireEvent.click(screen.getAllByRole('button', { name: 'Disconnect' })[0])
+
+      await waitFor(() => {
+        expect(screen.getByText('Disconnected')).toBeInTheDocument()
+      })
+      await waitFor(() => {
+        expect(
+          screen.getAllByRole('button', { name: /Connect Freighter/ })
+        ).toHaveLength(2)
+      })
+
+      expect(walletEvents.length).toBeGreaterThan(0)
+      expect(walletEvents[walletEvents.length - 1]).toEqual({
+        publicKey: null,
+      })
+    } finally {
+      window.removeEventListener('txwatch:wallet', listener)
+      setItemSpy.mockRestore()
+      removeItemSpy.mockRestore()
+    }
   })
 })

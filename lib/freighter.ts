@@ -39,6 +39,34 @@ export const FREIGHTER_NETWORK_BY_CHAIN: Record<Network, string> = {
   futurenet: 'FUTURENET',
 }
 
+/** Reverse of {@link FREIGHTER_NETWORK_BY_CHAIN}: Freighter network id → app network. */
+export const FREIGHTER_CHAIN_BY_NETWORK: Record<string, Network> = Object.fromEntries(
+  (Object.entries(FREIGHTER_NETWORK_BY_CHAIN) as [Network, string][]).map(([chain, network]) => [
+    network,
+    chain,
+  ])
+)
+
+/** Maps a Freighter network id to the app network, or null when unsupported. */
+export function mapFreighterNetwork(freighterNetwork: string | null): Network | null {
+  if (!freighterNetwork) return null
+  return FREIGHTER_CHAIN_BY_NETWORK[freighterNetwork] ?? null
+}
+
+/**
+ * Canonical mismatch message, or null when the wallet is on the expected
+ * network. `walletNetwork` is a Freighter network id (e.g. `"TESTNET"`).
+ */
+export function networkMismatchWarning(
+  walletNetwork: string | null,
+  network: Network
+): string | null {
+  if (isNetworkMatch(network, walletNetwork)) return null
+  const expected = FREIGHTER_NETWORK_BY_CHAIN[network]
+  const actual = walletNetwork ?? 'an unknown network'
+  return `Freighter is on ${actual} but this app is set to ${network} (${expected}). Switch networks in the Freighter extension.`
+}
+
 /** The extension is missing, disabled, or not answering. */
 export class FreighterUnavailableError extends Error {
   constructor(message = FREIGHTER_NOT_INSTALLED) {

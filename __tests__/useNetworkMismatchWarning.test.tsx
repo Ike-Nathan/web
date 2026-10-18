@@ -4,6 +4,23 @@ import {
   networkMismatchWarning,
   useNetworkMismatchWarning,
 } from '@/lib/useNetworkMismatchWarning'
+import { FREIGHTER_NETWORK_BY_CHAIN, freighterNetworkForChain } from '@/lib/freighter'
+
+const mockIsConnected = vi.fn()
+const mockGetAddress = vi.fn()
+const mockGetNetworkDetails = vi.fn()
+
+vi.mock('@stellar/freighter-api', () => ({
+  isConnected: (...args: unknown[]) => mockIsConnected(...args),
+  getAddress: (...args: unknown[]) => mockGetAddress(...args),
+  getNetworkDetails: (...args: unknown[]) => mockGetNetworkDetails(...args),
+}))
+
+function mockWallet(network: string) {
+  mockIsConnected.mockResolvedValue({ isConnected: true })
+  mockGetAddress.mockResolvedValue({ address: 'GABC' })
+  mockGetNetworkDetails.mockResolvedValue({ network, networkPassphrase: '' })
+}
 
 describe('networkMismatchWarning', () => {
   it('maps Freighter network names and warns on mismatch', () => {
@@ -17,16 +34,34 @@ describe('networkMismatchWarning', () => {
       'Your wallet is on TESTNET, but this contract is on MAINNET'
     )
   })
+
+  it('covers every network in both directions', () => {
+    for (const [chain, freighterNetwork] of Object.entries(FREIGHTER_NETWORK_BY_CHAIN)) {
+      expect(freighterNetworkForChain(chain)).toBe(freighterNetwork)
+      expect(networkMismatchWarning(freighterNetwork, chain)).toBeNull()
+
+      for (const [otherChain, otherFreighterNetwork] of Object.entries(
+        FREIGHTER_NETWORK_BY_CHAIN
+      )) {
+        if (otherChain === chain) continue
+        expect(networkMismatchWarning(freighterNetwork, otherChain)).toBe(
+          `Your wallet is on ${freighterNetwork}, but this contract is on ${otherChain.toUpperCase()}`
+        )
+        expect(networkMismatchWarning(otherFreighterNetwork, chain)).toBe(
+          `Your wallet is on ${otherFreighterNetwork}, but this contract is on ${chain.toUpperCase()}`
+        )
+      }
+    }
+  })
 })
 
 describe('useNetworkMismatchWarning', () => {
   beforeEach(() => {
-    delete (window as any).freighter
     vi.clearAllMocks()
   })
 
   it('warns on the initial mount when the wallet network differs', async () => {
-    ;(window as any).freighter = { getNetwork: vi.fn().mockResolvedValue('PUBLIC') }
+    mockWallet('PUBLIC')
 
     const { result } = renderHook(() => useNetworkMismatchWarning('testnet', true))
 
@@ -38,16 +73,16 @@ describe('useNetworkMismatchWarning', () => {
   })
 
   it('stays quiet on mount when the networks match', async () => {
-    ;(window as any).freighter = { getNetwork: vi.fn().mockResolvedValue('TESTNET') }
+    mockWallet('TESTNET')
 
     const { result } = renderHook(() => useNetworkMismatchWarning('testnet', true))
 
-    await waitFor(() => expect((window as any).freighter.getNetwork).toHaveBeenCalled())
+    await waitFor(() => expect(mockGetNetworkDetails).toHaveBeenCalled())
     expect(result.current.networkWarning).toBeNull()
   })
 
   it('re-checks when the selected network changes', async () => {
-    ;(window as any).freighter = { getNetwork: vi.fn().mockResolvedValue('TESTNET') }
+    mockWallet('TESTNET')
 
     const { result, rerender } = renderHook(
       ({ network }: { network: 'testnet' | 'mainnet' }) =>
@@ -76,11 +111,7 @@ describe('useNetworkMismatchWarning', () => {
 
     expect(result.current.networkWarning).toBeNull()
 
-    ;(window as any).freighter = {
-      getNetwork: vi.fn().mockResolvedValue('PUBLIC'),
-      getPublicKey: vi.fn().mockResolvedValue('GABC'),
-      isConnected: vi.fn().mockResolvedValue(true),
-    }
+    mockWallet('PUBLIC')
     rerender({ connected: true })
 
     await waitFor(() =>
@@ -94,7 +125,7 @@ describe('useNetworkMismatchWarning', () => {
     const { result } = renderHook(() => useNetworkMismatchWarning('testnet', true))
     expect(result.current.networkWarning).toBeNull()
 
-    ;(window as any).freighter = { getNetwork: vi.fn().mockResolvedValue('PUBLIC') }
+    mockWallet('PUBLIC')
     await result.current.checkNetworkMismatch()
 
     await waitFor(() =>
@@ -105,7 +136,7 @@ describe('useNetworkMismatchWarning', () => {
   })
 
   it('clears the warning when the wallet disconnects', async () => {
-    ;(window as any).freighter = { getNetwork: vi.fn().mockResolvedValue('PUBLIC') }
+    mockWallet('PUBLIC')
 
     const { result } = renderHook(() => useNetworkMismatchWarning('testnet', true))
     await waitFor(() => expect(result.current.networkWarning).not.toBeNull())
@@ -115,8 +146,8 @@ describe('useNetworkMismatchWarning', () => {
     expect(result.current.networkWarning).toBeNull()
   })
 
-  it('clears the warning when getNetwork rejects (locked or disconnected wallet)', async () => {
-    ;(window as any).freighter = { getNetwork: vi.fn().mockResolvedValue('PUBLIC') }
+  it('clears the warning when getNetworkDetails rejects (locked or disconnected wallet)', async () => {
+    mockWallet('PUBLIC')
 
     const { result, rerender } = renderHook(
       ({ network }: { network: 'testnet' | 'mainnet' }) =>
@@ -125,7 +156,7 @@ describe('useNetworkMismatchWarning', () => {
     )
     await waitFor(() => expect(result.current.networkWarning).not.toBeNull())
 
-    ;(window as any).freighter = { getNetwork: vi.fn().mockRejectedValue(new Error('locked')) }
+    mockGetNetworkDetails.mockRejectedValue(new Error('locked'))
     rerender({ network: 'mainnet' })
 
     await waitFor(() => expect(result.current.networkWarning).toBeNull())

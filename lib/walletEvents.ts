@@ -9,8 +9,13 @@
  * a stale address and a stale "Connected" badge.
  *
  * Every connect/disconnect now funnels through `broadcastWalletChange`, which
- * updates the `localStorage` and `window` mirrors and notifies listeners with a
- * `txwatch:wallet` CustomEvent. `useWalletState` is the React binding for it.
+ * notifies listeners with a `txwatch:wallet` CustomEvent. `useWalletState` is
+ * the React binding for it.
+ *
+ * Nothing is persisted: the wallet is the source of truth. The public key is
+ * deliberately *not* written to `localStorage` or `window` (it would be a
+ * privacy leak with no benefit, since it is never read back). Any value left
+ * behind by older builds is removed on startup.
  */
 
 import { FREIGHTER_PUBLIC_KEY } from '@/lib/storageKeys'
@@ -23,25 +28,44 @@ export interface WalletChangeDetail {
 }
 
 /**
+ * Best-effort removal of the legacy persisted key. Storage access can throw
+ * (Safari private windows, storage disabled by policy, quota errors), so every
+ * call is guarded and failures are ignored.
+ */
+function clearPersistedPublicKey(): void {
+  try {
+    localStorage.removeItem(WALLET_STORAGE_KEY)
+  } catch {
+    // Storage unavailable — nothing to clean up.
+  }
+}
+
+/**
  * Publish the current wallet state to every other wallet-aware component.
  *
- * Passing `null` clears both mirrors as well as broadcasting, so no consumer is
- * left holding a key that no longer has a live connection behind it.
+ * Passing `null` broadcasts a cleared state, so no consumer is left holding a
+ * key that no longer has a live connection behind it. The event is always
+ * dispatched, even if storage access throws.
  */
 export function broadcastWalletChange(publicKey: string | null): void {
   if (typeof window === 'undefined') return
 
-  if (publicKey) {
-    window.__freighterPublicKey = publicKey
-    localStorage.setItem(WALLET_STORAGE_KEY, publicKey)
-  } else {
+  // Never persist the key; just make sure no stale copy survives.
+  clearPersistedPublicKey()
+  try {
     delete window.__freighterPublicKey
-    localStorage.removeItem(WALLET_STORAGE_KEY)
+  } catch {
+    // Ignore — the window mirror is not required for correctness.
   }
 
   window.dispatchEvent(
     new CustomEvent<WalletChangeDetail>(WALLET_EVENT, { detail: { publicKey } })
   )
+}
+
+// Remove any value persisted by older builds as soon as this module loads.
+if (typeof window !== 'undefined') {
+  clearPersistedPublicKey()
 }
 
 /**

@@ -62,5 +62,6 @@ test.describe('Wallet Connection Persistence', () => {
 
     // The connected key must live only in the extension, never in the browser.
     expect(await page.evaluate(() => window.localStorage.getItem('freighter_public_key'))).toBeNull();
+    expect(await page.evaluate(() => (window as unknown as Record<string, unknown>).__freighterPublicKey)).toBeUndefined();
   });
 });

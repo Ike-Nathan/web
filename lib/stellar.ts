@@ -1,6 +1,7 @@
 import { Network } from '@/types'
 import { Address, xdr } from '@stellar/stellar-sdk'
 import { StrKey } from '@stellar/stellar-sdk'
+import { freighterNetworkToAppNetwork } from '@/lib/freighter'
 
 export const HORIZON_URLS: Record<Network, string> = {
   mainnet: 'https://horizon.stellar.org',
@@ -76,21 +77,10 @@ export function isNetwork(value: string | undefined): value is Network {
 
 /**
  * Maps Freighter network strings (e.g. PUBLIC, TESTNET, FUTURENET) to the app Network type (#8).
+ * Delegates to the canonical bidirectional map in lib/freighter.ts (#187).
  */
 export function mapFreighterNetwork(freighterNetwork: string | null | undefined): Network | null {
-  if (!freighterNetwork) return null
-  const normalized = freighterNetwork.trim().toUpperCase()
-  switch (normalized) {
-    case 'PUBLIC':
-    case 'MAINNET':
-      return 'mainnet'
-    case 'TESTNET':
-      return 'testnet'
-    case 'FUTURENET':
-      return 'futurenet'
-    default:
-      return null
-  }
+  return freighterNetworkToAppNetwork(freighterNetwork)
 }
 
 export function truncateId(id: string, chars = 8): string {

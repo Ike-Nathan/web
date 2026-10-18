@@ -1,11 +1,7 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useWalletState } from '@/hooks/useWalletState'
-import { useState, useEffect, useCallback } from 'react'
-
-const WALLET_STORAGE_KEY = 'freighter_public_key'
-import { useState, useEffect } from 'react'
 import {
   connectFreighter,
   FreighterUnavailableError,
@@ -22,15 +18,10 @@ interface FreighterConnectProps {
 
 export default function FreighterConnect({
   onConnect,
-  className = '',
-}: FreighterConnectProps) {
-  const { publicKey, initialized, publish } = useWalletState()
-export default function FreighterConnect({
-  onConnect,
   onDisconnect,
   className = '',
 }: FreighterConnectProps) {
-  const [publicKey, setPublicKey] = useState<string | null>(null)
+  const { publicKey, initialized, publish } = useWalletState()
   const [network, setNetwork] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -52,38 +43,19 @@ export default function FreighterConnect({
   useEffect(() => {
     if (publicKey) onConnectRef.current?.(publicKey)
   }, [publicKey])
-    if (publicKey) onConnect?.(publicKey)
+
   const checkConnection = useCallback(async () => {
     try {
-      if (!window.freighter) {
-        return
-      }
-
-      const connected = await window.freighter.isConnected()
-      if (connected) {
-        const [key, net] = await Promise.all([
-          window.freighter.getPublicKey(),
-          window.freighter.getNetwork ? window.freighter.getNetwork() : Promise.resolve(null),
-        ])
-        setPublicKey(key)
-        setNetwork(net)
-        window.__freighterPublicKey = key
-        onConnect?.(key)
-        setMissingExtension(false)
-      } else {
-        setPublicKey(null)
-        setNetwork(null)
       const connection = await readFreighterConnection()
       if (connection?.publicKey) {
-        setPublicKey(connection.publicKey)
-        onConnect?.(connection.publicKey)
+        publish(connection.publicKey)
+        setNetwork(connection.network ?? null)
+        setMissingExtension(false)
       }
     } catch {
       // Connection check failed
-    } finally {
-      setIsInitializing(false)
     }
-  }, [onConnect])
+  }, [publish])
 
   useEffect(() => {
     checkConnection()
@@ -91,28 +63,18 @@ export default function FreighterConnect({
 
   // Periodic polling & focus listener to detect account / network changes (#9)
   useEffect(() => {
-    let intervalId: NodeJS.Timeout | null = null
+    let intervalId: ReturnType<typeof setInterval> | null = null
 
     const handleSync = async () => {
-      if (document.hidden || !window.freighter) return
+      if (document.hidden) return
       try {
-        const connected = await window.freighter.isConnected()
-        if (connected) {
-          const [key, net] = await Promise.all([
-            window.freighter.getPublicKey(),
-            window.freighter.getNetwork ? window.freighter.getNetwork() : Promise.resolve(null),
-          ])
-          setPublicKey((prev) => {
-            if (prev !== key) {
-              window.__freighterPublicKey = key
-              onConnect?.(key)
-            }
-            return key
-          })
-          setNetwork(net)
+        const connection = await readFreighterConnection()
+        if (connection?.publicKey) {
+          publish(connection.publicKey)
+          setNetwork(connection.network ?? null)
           setMissingExtension(false)
         } else if (publicKey) {
-          setPublicKey(null)
+          publish(null)
           setNetwork(null)
         }
       } catch {
@@ -139,7 +101,7 @@ export default function FreighterConnect({
       document.removeEventListener('visibilitychange', onVisibilityChange)
       window.removeEventListener('focus', onFocus)
     }
-  }, [publicKey, onConnect])
+  }, [publicKey, publish])
 
   async function connect() {
     if (isConnecting) return
@@ -148,32 +110,14 @@ export default function FreighterConnect({
     setError(null)
 
     try {
-      if (!window.freighter) {
-        setMissingExtension(true)
-        setError('Freighter not installed - install the extension and reload')
-        return
-      }
-
       setMissingExtension(false)
-      const key = await window.freighter.getPublicKey()
-      const net = window.freighter.getNetwork ? await window.freighter.getNetwork() : null
-
-      if (!key) {
-        setError('Failed to retrieve wallet information')
-        return
-      }
-
-      publish(key)
-      setPublicKey(key)
-      setNetwork(net)
-      window.__freighterPublicKey = key
-      localStorage.setItem(WALLET_STORAGE_KEY, key)
-      onConnect?.(key)
       const session = await connectFreighter()
-      setPublicKey(session.publicKey)
+      publish(session.publicKey)
+      setNetwork(session.network ?? null)
       onConnect?.(session.publicKey)
     } catch (err) {
       if (err instanceof FreighterUnavailableError) {
+        setMissingExtension(true)
         openFreighterInstallPage()
       }
       setError(err instanceof Error ? err.message : 'Connection rejected')
@@ -188,9 +132,7 @@ export default function FreighterConnect({
   // a key cached in localStorage would outlive an account switch in Freighter.
   function disconnect() {
     publish(null)
-    setPublicKey(null)
     setNetwork(null)
-    localStorage.removeItem(WALLET_STORAGE_KEY)
     onDisconnect?.()
   }
 
@@ -298,12 +240,7 @@ export default function FreighterConnect({
             type="button"
             onClick={async () => {
               setError(null)
-              if (window.freighter) {
-                setMissingExtension(false)
-                await connect()
-              } else {
-                setError('Freighter extension still not detected')
-              }
+              await connect()
             }}
             className="inline-flex items-center px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-xs text-zinc-200 border border-zinc-700 transition-colors self-start"
           >
