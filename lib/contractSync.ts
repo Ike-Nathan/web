@@ -13,17 +13,14 @@ import {
   updateContract,
   removeContract,
 } from '@/lib/contractsApi'
-import { CONTRACTS_KEY, SYNC_STATUS_KEY } from '@/lib/storageKeys'
+import { SYNC_STATUS_KEY } from '@/lib/storageKeys'
 
-export type SyncState = 'synced' | 'error'
+type SyncState = 'synced' | 'error'
 export interface SyncStatus {
   state: SyncState
   error?: string
   at: number
 }
-
-/** Storage key used by the local contract cache; storage events on it signal cross-tab changes. */
-export const CONTRACTS_STORAGE_KEY = CONTRACTS_KEY
 
 /**
  * Re-exported from the storage layer so callers get a subscription that fires
@@ -58,7 +55,10 @@ export interface SyncResult {
 }
 
 /** Save locally (cache) and push to the API when configured. Never throws. */
-export async function syncSaveContract(contract: WatchedContract, isNew: boolean): Promise<SyncResult> {
+export async function syncSaveContract(
+  contract: WatchedContract,
+  isNew: boolean
+): Promise<SyncResult> {
   saveContract(contract)
   if (!isApiConfigured()) return { ok: true }
   try {
@@ -92,7 +92,10 @@ export async function syncDeleteContract(id: string): Promise<SyncResult> {
  * rather than deleted, so their alert history is not lost. On failure the
  * cache is kept and the error returned.
  */
-export async function refreshContracts(): Promise<{ contracts: WatchedContract[]; error?: string }> {
+export async function refreshContracts(): Promise<{
+  contracts: WatchedContract[]
+  error?: string
+}> {
   if (!isApiConfigured()) return { contracts: getContracts() }
   try {
     const remote = await listContracts()
@@ -103,7 +106,11 @@ export async function refreshContracts(): Promise<{ contracts: WatchedContract[]
       setStatus(c.id, { state: 'synced', at: Date.now() })
     })
     localOnly.forEach((c) => {
-      setStatus(c.id, { state: 'error', error: 'Pending upload', at: Date.now() })
+      setStatus(c.id, {
+        state: 'error',
+        error: 'Pending upload',
+        at: Date.now(),
+      })
     })
     return { contracts: getContracts() }
   } catch (e) {

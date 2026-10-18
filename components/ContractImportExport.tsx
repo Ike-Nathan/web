@@ -1,14 +1,13 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { getContracts, exportAllStorageData } from '@/lib/storage'
+import { getContracts, exportAllStorageData, rekeyAlerts } from '@/lib/storage'
 import { syncSaveContract, syncDeleteContract } from '@/lib/sync'
 import {
   buildBackup,
   buildSnapshot,
   parseImport,
   planImport,
-  type BackupSettings,
   type DuplicateStrategy,
   type ImportMode,
   type ImportParseResult,
@@ -41,13 +40,23 @@ export default function ContractImportExport() {
     const contracts = getContracts()
     const payload =
       exportMode === 'everything'
-        ? buildBackup(contracts, gatherAlerts(), gatherSettings(), exportAllStorageData())
+        ? buildBackup(
+            contracts,
+            gatherAlerts(),
+            gatherSettings(),
+            exportAllStorageData()
+          )
         : buildSnapshot(contracts)
     const json = JSON.stringify(payload, null, 2)
-    const url = URL.createObjectURL(new Blob([json], { type: 'application/json' }))
+    const url = URL.createObjectURL(
+      new Blob([json], { type: 'application/json' })
+    )
     const a = document.createElement('a')
     a.href = url
-    a.download = exportMode === 'everything' ? 'txwatch-backup.json' : 'txwatch-contracts.json'
+    a.download =
+      exportMode === 'everything'
+        ? 'txwatch-backup.json'
+        : 'txwatch-contracts.json'
     a.click()
     setTimeout(() => URL.revokeObjectURL(url), 0)
   }
@@ -73,7 +82,9 @@ export default function ContractImportExport() {
     }
   }
 
-  const plan = parsed ? planImport(getContracts(), parsed.contracts, mode, dupes) : null
+  const plan = parsed
+    ? planImport(getContracts(), parsed.contracts, mode, dupes)
+    : null
 
   async function handleApply() {
     if (!plan) return
@@ -88,24 +99,30 @@ export default function ContractImportExport() {
       // Replace: re-key alerts for contracts matched by (contract_id, network)
       // instead of letting deleteContract cascade-delete them.
       const existing = getContracts()
-      const byKey = new Map(existing.map((c) => [contractKey(c), c]))
-      const savedKeys = new Set(plan.toSave.map(contractKey))
-      const toDelete = plan.toDeleteIds.filter((id) => !plan.toSave.some((c) => c.id === id))
+      const toDelete = plan.toDeleteIds.filter(
+        (id) => !plan.toSave.some((c) => c.id === id)
+      )
 
       for (const id of toDelete) {
         const old = existing.find((c) => c.id === id)
-        const replacement = old ? plan.toSave.find((c) => contractKey(c) === contractKey(old)) : undefined
+        const replacement = old
+          ? plan.toSave.find((c) => contractKey(c) === contractKey(old))
+          : undefined
         if (old && replacement) {
           try {
             rekeyAlerts(old.id, replacement.id)
           } catch (err) {
-            errors.push(`Alerts for ${old.contract_id}: ${err instanceof Error ? err.message : 're-key failed'}`)
+            errors.push(
+              `Alerts for ${old.contract_id}: ${err instanceof Error ? err.message : 're-key failed'}`
+            )
           }
         }
         try {
           await syncDeleteContract(id)
         } catch (err) {
-          errors.push(`Delete ${old?.contract_id ?? id}: ${err instanceof Error ? err.message : 'sync failed'}`)
+          errors.push(
+            `Delete ${old?.contract_id ?? id}: ${err instanceof Error ? err.message : 'sync failed'}`
+          )
         }
       }
 
@@ -113,7 +130,9 @@ export default function ContractImportExport() {
         try {
           await syncSaveContract(contract)
         } catch (err) {
-          errors.push(`Save ${contract.contract_id}: ${err instanceof Error ? err.message : 'sync failed'}`)
+          errors.push(
+            `Save ${contract.contract_id}: ${err instanceof Error ? err.message : 'sync failed'}`
+          )
         }
       }
 
@@ -124,7 +143,7 @@ export default function ContractImportExport() {
       setMessage(
         errors.length === 0
           ? `Imported ${plan.toSave.length} contract(s).`
-          : `Imported with ${errors.length} error(s).`,
+          : `Imported with ${errors.length} error(s).`
       )
       setParsed(null)
       setConfirmReplace(false)
@@ -148,15 +167,26 @@ export default function ContractImportExport() {
             <option value="everything">Everything</option>
           </select>
         </label>
-        <button onClick={handleExport} className="px-3 py-1.5 rounded bg-indigo-600 text-white text-sm">
+        <button
+          onClick={handleExport}
+          className="px-3 py-1.5 rounded bg-indigo-600 text-white text-sm"
+        >
           Export
         </button>
       </div>
       <div>
-        <label className="block text-sm text-zinc-400 mb-1" htmlFor="import-file">
+        <label
+          className="block text-sm text-zinc-400 mb-1"
+          htmlFor="import-file"
+        >
           Import contracts
         </label>
-        <input id="import-file" type="file" accept="application/json,.json" onChange={handleFile} />
+        <input
+          id="import-file"
+          type="file"
+          accept="application/json,.json"
+          onChange={handleFile}
+        />
       </div>
 
       {parsed && plan && (
@@ -188,7 +218,11 @@ export default function ContractImportExport() {
               <ul className="list-disc pl-5 text-red-400">
                 {plan.toDeleteIds.map((id) => {
                   const c = getContracts().find((x) => x.id === id)
-                  return <li key={id}>{c ? `${c.contract_id} (${c.network})` : id}</li>
+                  return (
+                    <li key={id}>
+                      {c ? `${c.contract_id} (${c.network})` : id}
+                    </li>
+                  )
                 })}
               </ul>
             </div>
@@ -204,7 +238,11 @@ export default function ContractImportExport() {
           )}
           <label className="block">
             Mode{' '}
-            <select value={mode} onChange={(e) => setMode(e.target.value as ImportMode)} className="bg-zinc-900">
+            <select
+              value={mode}
+              onChange={(e) => setMode(e.target.value as ImportMode)}
+              className="bg-zinc-900"
+            >
               <option value="merge">Merge with existing</option>
               <option value="replace">Replace all existing</option>
             </select>
@@ -212,7 +250,11 @@ export default function ContractImportExport() {
           {mode === 'merge' && (
             <label className="block">
               Duplicates{' '}
-              <select value={dupes} onChange={(e) => setDupes(e.target.value as DuplicateStrategy)} className="bg-zinc-900">
+              <select
+                value={dupes}
+                onChange={(e) => setDupes(e.target.value as DuplicateStrategy)}
+                className="bg-zinc-900"
+              >
                 <option value="skip">Skip</option>
                 <option value="overwrite">Overwrite</option>
               </select>
@@ -220,21 +262,29 @@ export default function ContractImportExport() {
           )}
           {mode === 'replace' && confirmReplace && (
             <p className="text-amber-400">
-              Replace all existing contracts? This will delete the contracts listed above.
+              Replace all existing contracts? This will delete the contracts
+              listed above.
             </p>
           )}
           <button
             onClick={handleApply}
             disabled={
-              applying || (plan.toSave.length === 0 && plan.toDeleteIds.length === 0)
+              applying ||
+              (plan.toSave.length === 0 && plan.toDeleteIds.length === 0)
             }
             className="px-3 py-1.5 rounded bg-indigo-600 text-white disabled:opacity-50"
           >
-            {mode === 'replace' && confirmReplace ? 'Confirm replace' : 'Apply import'}
+            {mode === 'replace' && confirmReplace
+              ? 'Confirm replace'
+              : 'Apply import'}
           </button>
         </div>
       )}
-      {message && <p role="status" className="text-sm text-zinc-300">{message}</p>}
+      {message && (
+        <p role="status" className="text-sm text-zinc-300">
+          {message}
+        </p>
+      )}
       {failures.length > 0 && (
         <ul className="text-sm text-red-400 list-disc pl-5">
           {failures.map((f, i) => (

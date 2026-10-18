@@ -15,10 +15,10 @@
 
 import { FREIGHTER_PUBLIC_KEY } from '@/lib/storageKeys'
 
-export const WALLET_EVENT = 'txwatch:wallet'
-export const WALLET_STORAGE_KEY = FREIGHTER_PUBLIC_KEY
+const WALLET_EVENT = 'txwatch:wallet'
+const WALLET_STORAGE_KEY = FREIGHTER_PUBLIC_KEY
 
-export interface WalletChangeDetail {
+interface WalletChangeDetail {
   publicKey: string | null
 }
 

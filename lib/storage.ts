@@ -1,4 +1,10 @@
-import { WatchedContract, AlertPayload, AlertRule, Network, parseAlertRule } from '@/types'
+import {
+  WatchedContract,
+  AlertPayload,
+  AlertRule,
+  Network,
+  parseAlertRule,
+} from '@/types'
 import { HORIZON_URLS } from './stellar'
 import { safeParseStorage, storageLogger } from './storageLogger'
 import {
@@ -7,12 +13,8 @@ import {
   STORAGE_VERSION_KEY,
   RETENTION_KEY,
   ALERT_CAP_KEY,
-  NOTIFICATION_PREF_KEY,
-  VIEW_PREFERENCES_KEY,
   TXWATCH_KEYS,
 } from './storageKeys'
-
-export { CONTRACTS_KEY }
 
 const CURRENT_STORAGE_VERSION = 2
 const STORAGE_EVENT = 'txwatch:storage'
@@ -55,7 +57,10 @@ function load<T>(key: string): T[] {
   if (!storage) return []
   const parsed = safeParseStorage<unknown>(key, [])
   if (!Array.isArray(parsed)) {
-    storageLogger.warn('storage: non-array value, resetting to []', { key, value: parsed })
+    storageLogger.warn('storage: non-array value, resetting to []', {
+      key,
+      value: parsed,
+    })
     return []
   }
   const valid = parsed.filter((entry) => isValidEntry(key, entry))
@@ -74,7 +79,9 @@ const DEFAULT_RETENTION_DAYS = 90
 
 export function getRetentionDays(): number {
   const raw = Number(getStorage()?.getItem(RETENTION_KEY))
-  return Number.isFinite(raw) && raw >= 1 ? Math.floor(raw) : DEFAULT_RETENTION_DAYS
+  return Number.isFinite(raw) && raw >= 1
+    ? Math.floor(raw)
+    : DEFAULT_RETENTION_DAYS
 }
 
 export function setRetentionDays(days: number) {
@@ -84,15 +91,11 @@ export function setRetentionDays(days: number) {
   pruneOldAlerts()
 }
 
-export function getAlertCap(): number {
+function getAlertCap(): number {
   const raw = Number(getStorage()?.getItem(ALERT_CAP_KEY))
-  return Number.isFinite(raw) && raw >= 1 ? Math.floor(raw) : MAX_ALERTS_PER_CONTRACT
-}
-
-export function setAlertCap(cap: number) {
-  const storage = getStorage()
-  if (!storage || !Number.isFinite(cap) || cap < 1) return
-  storage.setItem(ALERT_CAP_KEY, String(Math.floor(cap)))
+  return Number.isFinite(raw) && raw >= 1
+    ? Math.floor(raw)
+    : MAX_ALERTS_PER_CONTRACT
 }
 
 function getStorageSize(): number {
@@ -191,7 +194,9 @@ function saveInternal<T>(key: string, data: T[]): boolean {
     const size = getStorageSize()
     if (size > STORAGE_QUOTA_BYTES * 0.9) {
       const cutoff = Date.now() - getRetentionDays() * 24 * 60 * 60 * 1000
-      const withinRetention = (data as AlertPayload[]).filter((a) => a.timestamp >= cutoff)
+      const withinRetention = (data as AlertPayload[]).filter(
+        (a) => a.timestamp >= cutoff
+      )
       data = capAlertsPerContract(withinRetention) as unknown as T[]
     }
     return writeItem(storage, key, JSON.stringify(data))
@@ -253,17 +258,22 @@ export function getContract(id: string): WatchedContract | undefined {
 }
 
 export function getNetworkDistribution(): Record<Network, number> {
-  return getContracts().reduce((counts, contract) => {
-    counts[contract.network] = (counts[contract.network] ?? 0) + 1
-    return counts
-  }, {} as Record<Network, number>)
+  return getContracts().reduce(
+    (counts, contract) => {
+      counts[contract.network] = (counts[contract.network] ?? 0) + 1
+      return counts
+    },
+    {} as Record<Network, number>
+  )
 }
 
-export function getContractByIdAndNetwork(
+function getContractByIdAndNetwork(
   contractId: string,
   network: string
 ): WatchedContract | undefined {
-  return getContracts().find((c) => c.contract_id === contractId && c.network === network)
+  return getContracts().find(
+    (c) => c.contract_id === contractId && c.network === network
+  )
 }
 
 export class DuplicateContractError extends Error {
@@ -290,7 +300,11 @@ export function replaceContracts(list: WatchedContract[]): boolean {
 
 export function saveContract(contract: WatchedContract): boolean {
   const contracts = getContracts()
-  const updated = { ...contract, enabled: contract.enabled ?? true, updated_at: Date.now() }
+  const updated = {
+    ...contract,
+    enabled: contract.enabled ?? true,
+    updated_at: Date.now(),
+  }
   const index = contracts.findIndex((c) => c.id === contract.id)
   if (index === -1) {
     return save(CONTRACTS_KEY, [...contracts, updated])
@@ -300,44 +314,32 @@ export function saveContract(contract: WatchedContract): boolean {
   return save(CONTRACTS_KEY, next)
 }
 
-export function setContractEnabled(id: string, enabled: boolean): boolean {
-  const contract = getContract(id)
-  if (!contract) return false
-  return saveContract({ ...contract, enabled })
-}
-
-export function toggleContractEnabled(id: string): boolean {
-  const contract = getContract(id)
-  if (!contract) return false
-  return saveContract({ ...contract, enabled: !(contract.enabled ?? true) })
-}
-
-export function getActiveContractCount(): number {
-  return getContracts().filter((c) => c.enabled ?? true).length
-}
-
 export function deleteContract(id: string) {
   const contract = getContract(id)
-  save(CONTRACTS_KEY, getContracts().filter((c) => c.id !== id))
+  save(
+    CONTRACTS_KEY,
+    getContracts().filter((c) => c.id !== id)
+  )
   if (contract) {
     deleteAlerts(contract.contract_id)
   }
 }
 
-export function deleteAlerts(contractId: string) {
+function deleteAlerts(contractId: string) {
   const alerts = load<AlertPayload>(ALERTS_KEY)
-  save(ALERTS_KEY, alerts.filter((a) => a.contract_id !== contractId))
+  save(
+    ALERTS_KEY,
+    alerts.filter((a) => a.contract_id !== contractId)
+  )
 }
 
 // Persists a full alert list (used by the import flow to restore a backup).
-export function replaceAlerts(alerts: AlertPayload[]): boolean {
-  const valid = alerts.filter((a) => isValidAlert(a))
-  return save(ALERTS_KEY, valid)
-}
-
 // Rewrites `contract_id` on every alert matching `oldContractId` so alert history
 // survives when an imported contract is re-keyed under a new id.
-export function rekeyAlerts(oldContractId: string, newContractId: string): boolean {
+export function rekeyAlerts(
+  oldContractId: string,
+  newContractId: string
+): boolean {
   if (oldContractId === newContractId) return true
   const alerts = load<AlertPayload>(ALERTS_KEY)
   let changed = false
@@ -350,40 +352,12 @@ export function rekeyAlerts(oldContractId: string, newContractId: string): boole
   return save(ALERTS_KEY, next)
 }
 
-export interface ViewPreferences {
-  [key: string]: unknown
-}
-
-export function getNotificationPreference(): string | null {
-  return getStorage()?.getItem(NOTIFICATION_PREF_KEY) ?? null
-}
-
-export function setNotificationPreference(preference: string | null) {
-  const storage = getStorage()
-  if (!storage) return
-  if (preference === null) {
-    storage.removeItem(NOTIFICATION_PREF_KEY)
-  } else {
-    storage.setItem(NOTIFICATION_PREF_KEY, preference)
-  }
-}
-
-export function getViewPreferences(): ViewPreferences {
-  const storage = getStorage()
-  if (!storage) return {}
-  const parsed = safeParseStorage<unknown>(VIEW_PREFERENCES_KEY, {})
-  return isRecord(parsed) ? (parsed as ViewPreferences) : {}
-}
-
-export function setViewPreferences(preferences: ViewPreferences) {
-  const storage = getStorage()
-  if (!storage) return
-  storage.setItem(VIEW_PREFERENCES_KEY, JSON.stringify(preferences))
-}
-
 export function deleteAlert(alertId: string) {
   const alerts = load<AlertPayload & { id?: string }>(ALERTS_KEY)
-  save(ALERTS_KEY, alerts.filter((a) => a.id !== alertId))
+  save(
+    ALERTS_KEY,
+    alerts.filter((a) => a.id !== alertId)
+  )
 }
 
 export function getAlerts(contractId: string): AlertPayload[] {
@@ -404,7 +378,9 @@ export function seedMockAlerts(
   const now = Date.now()
   for (let index = count - 1; index >= 0; index--) {
     const sequence = index + 1
-    const hash = Array.from({ length: 64 }, () => Math.floor(Math.random() * 16).toString(16)).join('')
+    const hash = Array.from({ length: 64 }, () =>
+      Math.floor(Math.random() * 16).toString(16)
+    ).join('')
     addAlert({
       label: `Mock Alert ${sequence}`,
       contract_id: contractId,
@@ -440,7 +416,10 @@ export function clearTxWatchStorage(keys: string[] = TXWATCH_KEYS): void {
   if (typeof window !== 'undefined') {
     stores.push(window.localStorage, window.sessionStorage)
   } else {
-    const g = globalThis as unknown as { localStorage?: Storage; sessionStorage?: Storage }
+    const g = globalThis as unknown as {
+      localStorage?: Storage
+      sessionStorage?: Storage
+    }
     if (g.localStorage) stores.push(g.localStorage)
     if (g.sessionStorage) stores.push(g.sessionStorage)
   }
@@ -455,10 +434,13 @@ export function clearTxWatchStorage(keys: string[] = TXWATCH_KEYS): void {
   }
 }
 
-export function addAlert(alert: AlertPayload | (AlertPayload & { contractId?: string; id?: string })) {
+export function addAlert(
+  alert: AlertPayload | (AlertPayload & { contractId?: string; id?: string })
+) {
   const normalizedAlert = {
     ...alert,
-    contract_id: alert.contract_id ?? (alert as { contractId?: string }).contractId,
+    contract_id:
+      alert.contract_id ?? (alert as { contractId?: string }).contractId,
   }
   const all = [...load<AlertPayload>(ALERTS_KEY), normalizedAlert]
   save(ALERTS_KEY, capAlertsPerContract(all))
