@@ -25,10 +25,9 @@ export interface SyncStatus {
 /** Storage key used by the local contract cache; storage events on it signal cross-tab changes. */
 export const CONTRACTS_STORAGE_KEY = CONTRACTS_KEY
 
-/**
- * Re-exported from the storage layer so callers get a subscription that fires
- * for both same-tab and cross-tab contract cache writes.
- */
+/** Custom event to notify same-tab listeners when the sync status dictionary changes. */
+const SYNC_STATUS_EVENT = 'txwatch:sync_status'
+
 export { onContractsChange }
 
 export function getSyncStatuses(): Record<string, SyncStatus> {
@@ -45,8 +44,29 @@ function setStatus(id: string, status: SyncStatus | null) {
     if (status) all[id] = status
     else delete all[id]
     localStorage.setItem(SYNC_STATUS_KEY, JSON.stringify(all))
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent(SYNC_STATUS_EVENT))
+    }
   } catch {
     // status is best-effort
+  }
+}
+
+/** Subscribe to both same-tab and cross-tab sync status updates. */
+export function onSyncStatusesChange(callback: () => void): () => void {
+  if (typeof window === 'undefined') return () => {}
+
+  const handleStorage = (e: StorageEvent) => {
+    if (e.key === SYNC_STATUS_KEY) callback()
+  }
+  const handleLocal = () => callback()
+
+  window.addEventListener('storage', handleStorage)
+  window.addEventListener(SYNC_STATUS_EVENT, handleLocal)
+
+  return () => {
+    window.removeEventListener('storage', handleStorage)
+    window.removeEventListener(SYNC_STATUS_EVENT, handleLocal)
   }
 }
 
@@ -57,19 +77,32 @@ export interface SyncResult {
   error?: string
 }
 
-/** Save locally (cache) and push to the API when configured. Never throws. */
-export async function syncSaveContract(contract: WatchedContract, isNew: boolean): Promise<SyncResult> {
-  saveContract(contract)
-  if (!isApiConfigured()) return { ok: true }
+export function syncSaveContract(contract: WatchedContract, isNew: boolean): { saved: boolean, syncPromise: Promise<SyncResult> } {
+  let saved = false;
   try {
-    await (isNew ? createContract(contract) : updateContract(contract))
-    setStatus(contract.id, { state: 'synced', at: Date.now() })
-    return { ok: true }
-  } catch (e) {
-    const error = errMsg(e)
-    setStatus(contract.id, { state: 'error', error, at: Date.now() })
-    return { ok: false, error }
+    saved = saveContract(contract)
+  } catch (err) {
+    return { saved: false, syncPromise: Promise.resolve({ ok: false, error: errMsg(err) }) }
   }
+
+  if (!saved) {
+    return { saved: false, syncPromise: Promise.resolve({ ok: false, error: 'Storage full or unavailable' }) }
+  }
+
+  const syncPromise = (async () => {
+    if (!isApiConfigured()) return { ok: true }
+    try {
+      await (isNew ? createContract(contract) : updateContract(contract))
+      setStatus(contract.id, { state: 'synced', at: Date.now() })
+      return { ok: true }
+    } catch (e) {
+      const error = errMsg(e)
+      setStatus(contract.id, { state: 'error', error, at: Date.now() })
+      return { ok: false, error }
+    }
+  })()
+
+  return { saved, syncPromise }
 }
 
 export async function syncDeleteContract(id: string): Promise<SyncResult> {
@@ -85,13 +118,6 @@ export async function syncDeleteContract(id: string): Promise<SyncResult> {
   }
 }
 
-/**
- * With an API configured, the API is the source of truth: replace the local
- * cache with its list, preserving server timestamps. Contracts that exist only
- * locally (e.g. created while offline) are kept and marked as pending upload
- * rather than deleted, so their alert history is not lost. On failure the
- * cache is kept and the error returned.
- */
 export async function refreshContracts(): Promise<{ contracts: WatchedContract[]; error?: string }> {
   if (!isApiConfigured()) return { contracts: getContracts() }
   try {
