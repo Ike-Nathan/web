@@ -5,11 +5,10 @@ import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { WatchedContract, Network } from '@/types'
 import { getContracts, getAlerts, deleteContract } from '@/lib/storage'
-import { refreshContracts } from '@/lib/contractSync'
+import { refreshContracts, syncSaveContract } from '@/lib/contractSync'
 import ContractCard from '@/components/ContractCard'
 import EmptyState from '@/components/EmptyState'
 import ContractsSkeleton from '@/components/ContractsSkeleton'
-import { NETWORK_COLORS } from '@/components/NetworkBadge'
 
 type ViewMode = 'flat' | 'grouped'
 type NetworkFilter = 'all' | Network
@@ -121,13 +120,9 @@ export default function ContractsPage() {
     const all = getContracts()
     setAllContracts(all)
     setMounted(true)
-    // With NEXT_PUBLIC_API_URL set, the API is the source of truth.
     refreshContracts().then((r) => setAllContracts(r.contracts))
   }, [])
 
-  // Check for a recently-created contract id in sessionStorage and highlight it once.
-  // The page owns the single highlight timer; ContractCard no longer runs its own.
-  // Restore persisted view/sort preferences. URL params take precedence over stored prefs.
   useEffect(() => {
     const initial = resolveInitialPrefs({
       viewMode: searchParams?.get('view'),
@@ -137,7 +132,6 @@ export default function ContractsPage() {
     setSortBy(initial.sortBy)
   }, [searchParams])
 
-  // Check for a recently-created contract id in sessionStorage and highlight it once
   useEffect(() => {
     try {
       const id = sessionStorage.getItem('txwatch_last_created_contract')
@@ -151,7 +145,7 @@ export default function ContractsPage() {
         }, HIGHLIGHT_DURATION_MS)
       }
     } catch {
-      // ignore (server-side or storage issues)
+      // ignore
     }
     return () => {
       if (highlightTimer.current) {
@@ -197,7 +191,6 @@ export default function ContractsPage() {
     }
   }, [page, totalPages])
 
-  // Jump to the page that contains the newly created contract so it can be seen.
   useEffect(() => {
     if (!highlightedId) return
     const index = sorted.findIndex((contract) => contract.id === highlightedId)
@@ -206,7 +199,6 @@ export default function ContractsPage() {
     setPage((current) => (current === targetPage ? current : targetPage))
   }, [highlightedId, sorted])
 
-  // Scroll the highlighted card into view once it is rendered on the active page.
   useEffect(() => {
     if (!highlightedId) return
     const el = document.getElementById(`contract-${highlightedId}`)
@@ -277,6 +269,18 @@ export default function ContractsPage() {
     setSelectionMode(false)
   }
 
+  const handlePauseSelected = () => {
+    for (const id of selectedIds) {
+      const contract = allContracts.find(c => c.id === id)
+      if (contract) {
+        syncSaveContract({ ...contract, enabled: false }, false)
+      }
+    }
+    setAllContracts((prev) => prev.map((c) => selectedIds.includes(c.id) ? { ...c, enabled: false } : c))
+    setSelectedIds([])
+    setSelectionMode(false)
+  }
+
   if (!mounted) return <ContractsSkeleton />
 
   const hasAnyContracts = allContracts.length > 0
@@ -341,54 +345,16 @@ export default function ContractsPage() {
         </div>
 
         <div className="flex items-center gap-2">
-          <label htmlFor="contract-sort" className="sr-only">
-            Sort contracts
-          </label>
-          <select
-            id="contract-sort"
-            value={sortBy}
-            onChange={(event) => setSortBy(event.target.value as SortOption)}
-            className="rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 focus:border-indigo-500 focus:outline-none"
-          >
-            {SORT_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-
-          <button
-            type="button"
-            onClick={() => setViewMode((prev) => (prev === 'flat' ? 'grouped' : 'flat'))}
-            className="rounded-lg bg-zinc-800 px-3 py-2 text-sm font-medium text-zinc-100 hover:bg-zinc-700"
-          >
-            {viewMode === 'flat' ? 'Group by network' : 'Flat view'}
-          </button>
-
-          <button
-            type="button"
-            onClick={toggleSelectionMode}
-            className={`rounded-lg px-3 py-2 text-sm font-medium ${
-              selectionMode
-                ? 'bg-indigo-600 text-white hover:bg-indigo-500'
-                : 'bg-zinc-800 text-zinc-100 hover:bg-zinc-700'
-            }`}
-          >
-            {selectionMode ? 'Cancel' : 'Select'}
-          </button>
-        <div className="flex items-center gap-3">
           {hasAnyContracts && (
             <div className="relative">
               <select
                 value={sortBy}
-                onChange={(e) => setSortBy(e.target.value as SortOption)}
-                className="appearance-none px-3 py-2 pr-8 rounded-lg bg-zinc-800 border border-zinc-700 text-sm font-medium text-zinc-200 hover:bg-zinc-750 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-colors cursor-pointer"
                 onChange={(e) => {
                   const next = e.target.value as SortOption
                   setSortBy(next)
                   writePrefs({ sortBy: next })
                 }}
-                className="appearance-none px-3 py-2 pr-8 rounded-lg bg-zinc-800 border border-zinc-700 text-sm font-medium text-zinc-200 hover:bg-zinc-700 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                className="appearance-none px-3 py-2 pr-8 rounded-lg bg-zinc-800 border border-zinc-700 text-sm font-medium text-zinc-200 hover:bg-zinc-700 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 cursor-pointer"
               >
                 {SORT_OPTIONS.map(({ value, label }) => (
                   <option key={value} value={value}>
@@ -401,33 +367,6 @@ export default function ContractsPage() {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                 </svg>
               </span>
-            </div>
-          )}
-
-          <div className="flex items-center gap-1 p-1 bg-zinc-900 border border-zinc-800 rounded-lg" role="group" aria-label="View mode">
-            <button
-              onClick={() => setViewMode('flat')}
-              aria-pressed={viewMode === 'flat'}
-              className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
-                viewMode === 'flat'
-                  ? 'bg-indigo-600 text-white'
-                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800'
-              }`}
-            >
-              Flat
-            </button>
-            <button
-              onClick={() => setViewMode('grouped')}
-              aria-pressed={viewMode === 'grouped'}
-              className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
-                viewMode === 'grouped'
-                  ? 'bg-indigo-600 text-white'
-                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800'
-              }`}
-            >
-              Grouped
-            </button>
-          </div>
             </div>
           )}
 
@@ -453,6 +392,18 @@ export default function ContractsPage() {
               )
             })}
           </div>
+
+          <button
+            type="button"
+            onClick={toggleSelectionMode}
+            className={`rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+              selectionMode
+                ? 'bg-indigo-600 text-white hover:bg-indigo-500'
+                : 'bg-zinc-800 text-zinc-100 hover:bg-zinc-700'
+            }`}
+          >
+            {selectionMode ? 'Cancel' : 'Select'}
+          </button>
         </div>
       </div>
 
@@ -468,14 +419,24 @@ export default function ContractsPage() {
             </button>
             <span className="text-sm text-zinc-400">{selectedIds.length} selected</span>
           </div>
-          <button
-            type="button"
-            onClick={() => setConfirmOpen(true)}
-            disabled={selectedIds.length === 0}
-            className="rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-500 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            Delete selected
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handlePauseSelected}
+              disabled={selectedIds.length === 0}
+              className="rounded-lg bg-zinc-800 px-4 py-2 text-sm font-medium text-zinc-100 hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Pause selected
+            </button>
+            <button
+              type="button"
+              onClick={() => setConfirmOpen(true)}
+              disabled={selectedIds.length === 0}
+              className="rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-500 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Delete selected
+            </button>
+          </div>
         </div>
       )}
 
@@ -495,68 +456,7 @@ export default function ContractsPage() {
       ) : !hasFilteredContracts ? (
         <EmptyState
           title="No matching contracts"
-          description="Try adjusting your search or filters."
-        />
-      ) : viewMode === 'flat' ? (
-        <>
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {paginated.map((contract) => (
-              <ContractCard
-                key={contract.id}
-                contract={contract}
-                highlighted={contract.id === highlightedId}
-              />
-            ))}
-          </div>
-
-          {totalPages > 1 && (
-            <div className="flex items-center justify-center gap-2">
-              <button
-                onClick={() => setPage((p) => Math.max(1, p - 1))}
-                disabled={page === 1}
-                className="px-3 py-1.5 rounded-lg bg-zinc-800 text-sm font-medium text-zinc-200 hover:bg-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                Previous
-              </button>
-              <span className="text-sm text-zinc-500">
-                Page {page} of {totalPages}
-              </span>
-              <button
-                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                disabled={page === totalPages}
-                className="px-3 py-1.5 rounded-lg bg-zinc-800 text-sm font-medium text-zinc-200 hover:bg-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                Next
-              </button>
-            </div>
-          )}
-        </>
-      ) : (
-        <div className="space-y-8">
-          {(Object.keys(grouped) as Network[]).map((network) => {
-            const contracts = grouped[network]
-            if (contracts.length === 0) return null
-            return (
-              <div key={network} className="space-y-4">
-                <h2 className="text-lg font-semibold text-zinc-200">
-                  {NETWORK_LABELS[network]}
-                  <span className="ml-2 text-sm font-normal text-zinc-500">
-                    {contracts.length}
-                  </span>
-                </h2>
-                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                  {contracts.map((contract) => (
-                    <ContractCard
-                      key={contract.id}
-                      contract={contract}
-                      highlighted={contract.id === highlightedId}
-                    />
-                  ))}
-                </div>
-              </div>
-            )
-          })}
-          description="Try adjusting your search or network filter."
+          description="Try adjusting your search or filter."
         />
       ) : viewMode === 'grouped' ? (
         <div className="space-y-8">
@@ -564,9 +464,6 @@ export default function ContractsPage() {
             const contracts = grouped[network]
             if (contracts.length === 0) return null
             return (
-              <div key={network} className="space-y-3">
-                <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">
-                  {NETWORK_LABELS[network]}
               <section key={network} className="space-y-3">
                 <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-400">
                   {NETWORK_LABELS[network]}
@@ -584,7 +481,7 @@ export default function ContractsPage() {
                     />
                   ))}
                 </div>
-              </div>
+              </section>
             )
           })}
         </div>
@@ -604,16 +501,9 @@ export default function ContractsPage() {
       )}
 
       {viewMode === 'flat' && totalPages > 1 && (
-        <div className="flex items-center justify-center gap-2">
+        <div className="flex items-center justify-center gap-2 mt-6">
           <button
             type="button"
-            onClick={() => setPage((prev) => Math.max(1, prev - 1))}
-            disabled={page === 1}
-            className="rounded-lg bg-zinc-800 px-3 py-2 text-sm text-zinc-100 hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            Previous
-          </button>
-          <span className="text-sm text-zinc-400">
             onClick={() => setPage((p) => Math.max(1, p - 1))}
             disabled={page === 1}
             className="px-3 py-1.5 rounded-lg bg-zinc-800 text-sm text-zinc-200 hover:bg-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed"
@@ -625,9 +515,6 @@ export default function ContractsPage() {
           </span>
           <button
             type="button"
-            onClick={() => setPage((prev) => Math.min(totalPages, prev + 1))}
-            disabled={page === totalPages}
-            className="rounded-lg bg-zinc-800 px-3 py-2 text-sm text-zinc-100 hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-50"
             onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
             disabled={page === totalPages}
             className="px-3 py-1.5 rounded-lg bg-zinc-800 text-sm text-zinc-200 hover:bg-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed"
