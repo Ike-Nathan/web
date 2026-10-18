@@ -161,8 +161,6 @@ describe('FreighterConnect', () => {
   })
 
   describe('unavailable extension', () => {
-    it('shows error and install link when extension is not installed', async () => {
-      delete (window as any).freighter
     it('shows error when extension is not installed', async () => {
       mockExtensionMissing()
 
@@ -178,6 +176,26 @@ describe('FreighterConnect', () => {
         )
         expect(screen.getByRole('button', { name: /check again/i })).toBeInTheDocument()
       })
+    })
+
+    it('opens the install page with noopener,noreferrer', async () => {
+      mockExtensionMissing()
+      const windowOpenSpy = vi.spyOn(window, 'open').mockImplementation(() => null)
+
+      render(<FreighterConnect />)
+
+      fireEvent.click(await screen.findByRole('button', { name: /Connect Freighter/ }))
+
+      const installLink = await screen.findByRole('link', { name: /Install Freighter/i })
+      fireEvent.click(installLink)
+
+      expect(windowOpenSpy).toHaveBeenCalledWith(
+        'https://www.freighter.app/',
+        '_blank',
+        'noopener,noreferrer'
+      )
+
+      windowOpenSpy.mockRestore()
     })
 
     it('allows retrying detection after extension is installed', async () => {

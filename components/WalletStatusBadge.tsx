@@ -2,68 +2,36 @@
 
 import { useEffect, useState } from 'react'
 import { subscribeWallet } from '@/lib/walletEvents'
-import { useState, useEffect } from 'react'
 import { readFreighterConnection } from '@/lib/freighter'
+import NetworkBadge from '@/components/NetworkBadge'
+import { Network } from '@/lib/types'
 
 export type WalletStatus = 'checking' | 'connected' | 'disconnected' | 'unavailable'
+
 /**
- * `checking` is the initial state: the extension's answer is unknown until
- * `isConnected()` settles, and showing "Unavailable" first made the badge
- * flash grey on every navigation.
+ * Maps a raw Freighter network id to the app's `Network`. `PUBLIC` is
+ * Freighter's name for mainnet, which is not obvious to new users.
  */
-type WalletStatus = 'checking' | 'connected' | 'disconnected' | 'unavailable'
+const FREIGHTER_NETWORK_MAP: Record<string, Network> = {
+  PUBLIC: Network.MAINNET,
+  TESTNET: Network.TESTNET,
+  FUTURENET: Network.FUTURENET,
+}
+
+function resolveNetwork(id: string | null | undefined): Network | null {
+  if (!id) return null
+  return FREIGHTER_NETWORK_MAP[id.toUpperCase()] ?? null
+}
 
 export default function WalletStatusBadge() {
   const [status, setStatus] = useState<WalletStatus>('checking')
+  const [networkId, setNetworkId] = useState<string | null>(null)
 
   useEffect(() => {
-    let mounted = true
-
-    async function checkStatus() {
-      if (typeof window === 'undefined') return
-      if (!window.freighter) {
-        if (mounted) setStatus('unavailable')
-        return
-      }
-
-      try {
-        const connected = await window.freighter.isConnected()
-        if (mounted) {
-          setStatus(connected ? 'connected' : 'disconnected')
-        }
-      } catch {
-        if (mounted) {
-          setStatus('disconnected')
-        }
-      }
-    }
-
-    checkStatus()
-
-    const handleFocus = () => {
-      checkStatus()
-    }
-    window.addEventListener('focus', handleFocus)
-
-    return () => {
-      mounted = false
-      window.removeEventListener('focus', handleFocus)
     let cancelled = false
 
-    let cancelled = false
-    window.freighter.isConnected().then((connected) => {
-      if (!cancelled) setStatus(connected ? 'connected' : 'disconnected')
-    })
-
-    // The extension probe above only covers this mount. A connect or
-    // disconnect triggered anywhere else in the app arrives on the event bus.
-    const unsubscribe = subscribeWallet((publicKey) => {
-      setStatus(publicKey ? 'connected' : 'disconnected')
-    })
-
-    return () => {
-      cancelled = true
-      unsubscribe()
+    // One probe on mount; afterwards the app-level watcher publishes every
+    // connect/disconnect/network change through the wallet event bus.
     readFreighterConnection()
       .then((connection) => {
         if (cancelled) return
@@ -72,36 +40,20 @@ export default function WalletStatusBadge() {
           return
         }
         setStatus(connection.publicKey ? 'connected' : 'disconnected')
+        setNetworkId(connection.network ?? null)
       })
       .catch(() => {
         if (!cancelled) setStatus('disconnected')
       })
 
+    const unsubscribe = subscribeWallet((publicKey, network) => {
+      setStatus(publicKey ? 'connected' : 'disconnected')
+      setNetworkId(network ?? null)
+    })
+
     return () => {
       cancelled = true
-    }
-    let active = true
-
-    async function check() {
-      try {
-        if (!window.freighter) {
-          if (active) setStatus('unavailable')
-          return
-        }
-        const connected = await window.freighter.isConnected()
-        if (active) setStatus(connected ? 'connected' : 'disconnected')
-      } catch {
-        // A rejected isConnected() (extension mid-reload, locked wallet,
-        // missing permissions) is not an error the user can act on: report
-        // "Disconnected" instead of leaving the badge stuck.
-        if (active) setStatus('disconnected')
-      }
-    }
-
-    void check()
-
-    return () => {
-      active = false
+      unsubscribe()
     }
   }, [])
 
@@ -127,13 +79,28 @@ export default function WalletStatusBadge() {
 
   const config = statusConfig[status]
 
+  const network = status === 'connected' ? resolveNetwork(networkId) : null
+
   return (
-    <div
-      data-testid="wallet-status-badge"
-      className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-zinc-900 border border-zinc-800"
-    >
-      <span className={`w-1.5 h-1.5 rounded-full ${config.color}`} />
-      <span className="text-xs text-zinc-400">{config.label}</span>
+    <div className="flex items-center gap-1.5">
+      <div
+        data-testid="wallet-status-badge"
+        className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-zinc-900 border border-zinc-800"
+      >
+        <span className={`w-1.5 h-1.5 rounded-full ${config.color}`} />
+        <span className="text-xs text-zinc-400">{config.label}</span>
+      </div>
+      {status === 'connected' &&
+        (network ? (
+          <NetworkBadge network={network} />
+        ) : networkId ? (
+          <span
+            title={networkId}
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-zinc-900 border border-zinc-800 text-xs text-zinc-400"
+          >
+            Custom network
+          </span>
+        ) : null)}
     </div>
   )
 }

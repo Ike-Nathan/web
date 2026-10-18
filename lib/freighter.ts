@@ -98,7 +98,19 @@ function apiErrorMessage(error: unknown, fallback: string): string {
 
 /** Opens the Freighter download page for users without the extension. */
 export function openFreighterInstallPage(): void {
-  window.open(FREIGHTER_INSTALL_URL, '_blank')
+  window.open(FREIGHTER_INSTALL_URL, '_blank', 'noopener,noreferrer')
+}
+
+/**
+ * Maps a Freighter network id to the app `Network`, or null for ids the
+ * dashboard does not know (custom networks, future additions).
+ */
+export function networkFromFreighterId(walletNetwork: string | null): Network | null {
+  if (!walletNetwork) return null
+  const match = (Object.entries(FREIGHTER_NETWORK_BY_CHAIN) as [Network, string][]).find(
+    ([, id]) => id === walletNetwork
+  )
+  return match ? match[0] : null
 }
 
 /** True when the extension is installed and answering requests. */

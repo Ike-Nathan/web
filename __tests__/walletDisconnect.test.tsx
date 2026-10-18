@@ -4,6 +4,7 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import FreighterConnect from '@/components/FreighterConnect'
 import WalletStatusBadge from '@/components/WalletStatusBadge'
 import { useFreighterConnection } from '@/lib/useFreighterConnection'
+import { publishWalletChange, subscribeWallet } from '@/lib/walletEvents'
 
 const MOCK_PUBLIC_KEY =
   'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
@@ -170,5 +171,54 @@ describe('wallet state broadcast', () => {
     render(<WalletStatusBadge />)
 
     expect(screen.getByText('Unavailable')).toBeInTheDocument()
+  })
+
+  it('delivers a wallet change published in one tab to another tab', async () => {
+    const received: Array<{ publicKey: string | null }> = []
+    const unsubscribe = subscribeWallet((detail) => {
+      received.push({ publicKey: detail.publicKey })
+    })
+
+    // A second, independent channel instance stands in for another tab.
+    const otherTab = new BroadcastChannel('txwatch-wallet')
+    const otherTabMessages: Array<{ publicKey: string | null }> = []
+    otherTab.onmessage = (event) => {
+      otherTabMessages.push({ publicKey: event.data.publicKey })
+    }
+
+    publishWalletChange(null)
+
+    await waitFor(() => {
+      expect(received).toEqual([{ publicKey: null }])
+    })
+    await waitFor(() => {
+      expect(otherTabMessages).toEqual([{ publicKey: null }])
+    })
+
+    unsubscribe()
+    otherTab.close()
+  })
+
+  it('falls back to the local event when BroadcastChannel is unavailable', async () => {
+    const original = globalThis.BroadcastChannel
+    // @ts-expect-error - simulate an environment without BroadcastChannel
+    delete globalThis.BroadcastChannel
+
+    try {
+      const received: Array<{ publicKey: string | null }> = []
+      const unsubscribe = subscribeWallet((detail) => {
+        received.push({ publicKey: detail.publicKey })
+      })
+
+      expect(() => publishWalletChange(MOCK_PUBLIC_KEY)).not.toThrow()
+
+      await waitFor(() => {
+        expect(received).toEqual([{ publicKey: MOCK_PUBLIC_KEY }])
+      })
+
+      unsubscribe()
+    } finally {
+      globalThis.BroadcastChannel = original
+    }
   })
 })
