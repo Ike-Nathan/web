@@ -54,21 +54,26 @@ const errMsg = (e: unknown) => (e instanceof Error ? e.message : 'Sync failed')
 
 export interface SyncResult {
   ok: boolean
+  /** Whether the local cache write succeeded. */
+  localSaved?: boolean
   error?: string
 }
 
 /** Save locally (cache) and push to the API when configured. Never throws. */
 export async function syncSaveContract(contract: WatchedContract, isNew: boolean): Promise<SyncResult> {
-  saveContract(contract)
-  if (!isApiConfigured()) return { ok: true }
+  const localSaved = saveContract(contract)
+  if (!localSaved) {
+    return { ok: false, localSaved: false, error: 'Storage full' }
+  }
+  if (!isApiConfigured()) return { ok: true, localSaved: true }
   try {
     await (isNew ? createContract(contract) : updateContract(contract))
     setStatus(contract.id, { state: 'synced', at: Date.now() })
-    return { ok: true }
+    return { ok: true, localSaved: true }
   } catch (e) {
     const error = errMsg(e)
     setStatus(contract.id, { state: 'error', error, at: Date.now() })
-    return { ok: false, error }
+    return { ok: false, localSaved: true, error }
   }
 }
 

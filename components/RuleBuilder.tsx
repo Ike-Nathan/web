@@ -103,6 +103,15 @@ export default function RuleBuilder({ rules, onChange, onRulesChanged }: RuleBui
   const presetsContainerRef = useRef<HTMLDivElement>(null)
   const presetItemRefs = useRef<(HTMLButtonElement | null)[]>([])
   const messageId = `${idPrefix}-message`
+  const typeHintId = `${idPrefix}-type-hint`
+  const thresholdHintId = `${idPrefix}-threshold-hint`
+  const errorId = `${idPrefix}-error`
+  const warningId = `${idPrefix}-warning`
+  const thresholdDescribedBy = [error ? errorId : null, thresholdHintId].filter(Boolean).join(' ')
+  const functionNameDescribedBy = error ? errorId : undefined
+  const functionNamesDescribedBy = error ? errorId : undefined
+  const typeDescribedBy = [error ? errorId : null, typeHintId].filter(Boolean).join(' ')
+=======
 
   useEffect(() => {
     if (!showPresets) return
@@ -324,6 +333,8 @@ export default function RuleBuilder({ rules, onChange, onRulesChanged }: RuleBui
           <select
             id={`${idPrefix}-type`}
             value={draftType}
+            aria-invalid={error ? true : undefined}
+            aria-describedby={typeDescribedBy}
             onChange={(e) => handleTypeChange(e.target.value as AlertRuleType)}
             className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-indigo-500"
           >
@@ -331,7 +342,7 @@ export default function RuleBuilder({ rules, onChange, onRulesChanged }: RuleBui
               <option key={t} value={t}>{getRuleMeta(t).label}</option>
             ))}
           </select>
-          <p className="text-xs text-zinc-500 mt-1">{getRuleMeta(draftType).description}</p>
+          <p id={typeHintId} className="text-xs text-zinc-500 mt-1">{getRuleMeta(draftType).description}</p>
         </div>
 
         {draftType === 'LargeTransfer' && (
@@ -346,7 +357,7 @@ export default function RuleBuilder({ rules, onChange, onRulesChanged }: RuleBui
               placeholder="e.g. 10000"
               value={thresholdText}
               aria-invalid={error ? true : undefined}
-              aria-describedby={error ? messageId : undefined}
+              aria-describedby={thresholdDescribedBy}
               onChange={(e) => {
                 setThresholdText(e.target.value)
                 clearMessages()
@@ -354,7 +365,7 @@ export default function RuleBuilder({ rules, onChange, onRulesChanged }: RuleBui
               className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-indigo-500"
             />
             {!isNaN(thresholdPreview) && (
-              <p className="text-xs text-zinc-500 mt-1">
+              <p id={thresholdHintId} className="text-xs text-zinc-500 mt-1">
                 Threshold: {formatXlm(thresholdPreview)} XLM
               </p>
             )}
@@ -371,7 +382,7 @@ export default function RuleBuilder({ rules, onChange, onRulesChanged }: RuleBui
               placeholder="e.g. transfer"
               value={functionName}
               aria-invalid={error ? true : undefined}
-              aria-describedby={error ? messageId : undefined}
+              aria-describedby={functionNameDescribedBy}
               onChange={(e) => {
                 setFunctionName(e.target.value)
                 clearMessages()
@@ -393,7 +404,7 @@ export default function RuleBuilder({ rules, onChange, onRulesChanged }: RuleBui
               placeholder="e.g. set_admin, upgrade, migrate"
               value={functionNamesText}
               aria-invalid={error ? true : undefined}
-              aria-describedby={error ? messageId : undefined}
+              aria-describedby={functionNamesDescribedBy}
               onChange={(e) => {
                 setFunctionNamesText(e.target.value)
                 clearMessages()
@@ -404,8 +415,8 @@ export default function RuleBuilder({ rules, onChange, onRulesChanged }: RuleBui
         )}
 
         <div id={messageId} aria-live="polite" aria-atomic="true">
-          {error && <p className="text-xs text-red-400">{error}</p>}
-          {warning && <p className="text-xs text-amber-400">{warning}</p>}
+          {error && <p id={errorId} className="text-xs text-red-400">{error}</p>}
+          {warning && <p id={warningId} className="text-xs text-amber-400">{warning}</p>}
         </div>
 
         <div className="flex flex-wrap gap-2">

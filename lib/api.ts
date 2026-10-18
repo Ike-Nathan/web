@@ -132,6 +132,11 @@ export function buildTestWebhookPayload(
   }
   if (amount !== undefined) {
     payload.amount = amount
+  }
+
+  return payload
+}
+
 /**
  * Syntactically valid but non-existent transaction hash (64 lowercase hex
  * chars) used for simulated alerts, so receivers that parse the hash do not
@@ -153,7 +158,7 @@ export function describeRule(rule: AlertRule): string {
   }
 }
 
-export interface TestWebhookPayloadOptions {
+export interface BuildTestWebhookPayloadOptions {
   contractId: string
   network?: Network
   /** Configured rule to simulate. Defaults to `AnyTransaction`. */
@@ -181,7 +186,7 @@ export function buildTestWebhookPayload({
   label = 'Test Alert',
   timestamp = Date.now(),
   transactionHash = TEST_TX_HASH,
-}: TestWebhookPayloadOptions): AlertPayload {
+}: BuildTestWebhookPayloadOptions): AlertPayload {
   const payload: AlertPayload = {
     label,
     contract_id: contractId,
@@ -211,18 +216,14 @@ export function buildTestWebhookPayload({
   return payload
 }
 
-export async function sendTestWebhook(
-  webhookUrl: string,
-  contractId: string,
-  network: Network = 'testnet',
-  signalOrTimeoutMs: AbortSignal | number = 10000,
-  secret?: string,
-  options?: TestWebhookPayloadOptions
-): Promise<TestWebhookResult> {
-  const payload = buildTestWebhookPayload(contractId, network, options)
 interface SendTestWebhookTransport {
   /** Caller-owned signal, or a timeout in milliseconds (default 10000). */
   signalOrTimeoutMs?: AbortSignal | number
+  /**
+   * Signing secret for the delivery. When provided (e.g. the stored
+   * `webhook_secret` of a watched contract), the request body is signed with
+   * HMAC-SHA256 and the signature is sent in the `SIGNATURE_HEADER` header.
+   */
   secret?: string
 }
 
@@ -230,7 +231,7 @@ export type SendTestWebhookOptions = SendTestWebhookTransport &
   (
     /** Send a pre-built payload verbatim, e.g. the one shown in a preview. */
     | { payload: AlertPayload }
-    | ({ payload?: undefined } & TestWebhookPayloadOptions)
+    | ({ payload?: undefined } & BuildTestWebhookPayloadOptions)
   )
 
 export async function sendTestWebhook(
