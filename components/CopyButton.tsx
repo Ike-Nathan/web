@@ -2,21 +2,6 @@
 
 import { useEffect, useRef, useState } from 'react'
 
-export function maskWebhookUrl(url: string): string {
-  if (!url) return ''
-  try {
-    const parsed = new URL(url)
-    const segments = parsed.pathname.split('/').filter(Boolean)
-    const last = segments.length > 0 ? segments[segments.length - 1] : ''
-    const maskedPath = last
-      ? `${parsed.pathname.slice(0, parsed.pathname.length - last.length)}****`
-      : parsed.pathname
-    return `${parsed.origin}${maskedPath}${parsed.search ? '?****' : ''}`
-  } catch {
-    return url.replace(/[^/]+$/, '****')
-  }
-}
-
 type CopyState = 'idle' | 'copied' | 'error'
 
 interface CopyButtonProps {
