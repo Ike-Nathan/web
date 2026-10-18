@@ -1,6 +1,5 @@
 import { horizonUrl } from '@/lib/stellar'
 import { SIGNATURE_HEADER, signWebhookPayload } from './webhookSignature'
-import { HORIZON_URLS } from '@/lib/stellar'
 import type { AlertPayload, AlertRule, Network } from '@/types'
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? ''
@@ -60,7 +59,10 @@ export async function apiFetch<T>(
     if (!text) return undefined as T
     return JSON.parse(text) as T
   } catch (error) {
-    if ((error as { name?: string })?.name === 'AbortError' && !init.signal?.aborted) {
+    if (
+      (error as { name?: string })?.name === 'AbortError' &&
+      !init.signal?.aborted
+    ) {
       throw new Error('Request timed out')
     }
     throw error
@@ -70,8 +72,6 @@ export async function apiFetch<T>(
   }
 }
 
-import type { AlertRule, AlertRuleType, Network } from '@/types'
-
 /** Result of a test webhook delivery: the HTTP status and whether it succeeded. */
 export interface TestWebhookResult {
   status: number
@@ -79,59 +79,6 @@ export interface TestWebhookResult {
   durationMs?: number
 }
 
-export interface TestWebhookPayloadOptions {
-  rule?: AlertRule | AlertRuleType | string
-  function_name?: string
-  amount?: string | number
-  transaction_hash?: string
-  is_test?: boolean
-}
-
-/**
- * Builds a dynamic, rule-aware test webhook payload (#24).
- * Replaces hardcoded values with realistic 64-hex dummy hashes,
- * valid Horizon explorer links, and rule-matching attributes.
- */
-export function buildTestWebhookPayload(
-  contractId: string,
-  network: Network = 'testnet',
-  options?: TestWebhookPayloadOptions
-) {
-  const dummyHash =
-    options?.transaction_hash ||
-    '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
-
-  let ruleType = 'AnyTransaction'
-  let functionName: string | undefined = options?.function_name
-  let amount: string | number | undefined = options?.amount
-
-  if (typeof options?.rule === 'string') {
-    ruleType = options.rule
-  } else if (options?.rule && typeof options.rule === 'object') {
-    ruleType = options.rule.rule_type
-    if (options.rule.rule_type === 'FunctionCalled') {
-      functionName = options.rule.function_name || functionName || 'transfer'
-    } else if (options.rule.rule_type === 'LargeTransfer') {
-      amount = options.rule.min_amount || amount || '1000'
-    }
-  }
-
-  const payload: Record<string, any> = {
-    label: 'Test Alert',
-    contract_id: contractId,
-    network,
-    rule_triggered: ruleType,
-    transaction_hash: dummyHash,
-    timestamp: Date.now(),
-    horizon_link: `${horizonUrl(network)}/transactions/${dummyHash}`,
-    is_test: true,
-  }
-
-  if (functionName) {
-    payload.function_name = functionName
-  }
-  if (amount !== undefined) {
-    payload.amount = amount
 /**
  * Syntactically valid but non-existent transaction hash (64 lowercase hex
  * chars) used for simulated alerts, so receivers that parse the hash do not
@@ -211,15 +158,32 @@ export function buildTestWebhookPayload({
   return payload
 }
 
-export async function sendTestWebhook(
-  webhookUrl: string,
-  contractId: string,
-  network: Network = 'testnet',
-  signalOrTimeoutMs: AbortSignal | number = 10000,
-  secret?: string,
-  options?: TestWebhookPayloadOptions
-): Promise<TestWebhookResult> {
-  const payload = buildTestWebhookPayload(contractId, network, options)
+/**
+ * The rule a test payload simulates, recovered from its rule-specific fields,
+ * so the proxy can rebuild the same payload server-side (#261).
+ */
+export function ruleFromPayload(payload: AlertPayload): AlertRule | undefined {
+  switch (payload.rule_triggered) {
+    case 'LargeTransfer':
+      return { type: 'LargeTransfer', threshold_xlm: payload.amount ?? 0 }
+    case 'FunctionCalled':
+      return {
+        type: 'FunctionCalled',
+        function_name: payload.function_name ?? '',
+      }
+    case 'AdminFunctionCalled':
+      return {
+        type: 'AdminFunctionCalled',
+        function_names: [payload.function_name ?? ''],
+      }
+    case 'AnyTransaction':
+    case 'TransactionFailed':
+      return { type: payload.rule_triggered }
+    default:
+      return undefined
+  }
+}
+
 interface SendTestWebhookTransport {
   /** Caller-owned signal, or a timeout in milliseconds (default 10000). */
   signalOrTimeoutMs?: AbortSignal | number
@@ -227,8 +191,8 @@ interface SendTestWebhookTransport {
 }
 
 export type SendTestWebhookOptions = SendTestWebhookTransport &
+  /** Send a pre-built payload verbatim, e.g. the one shown in a preview. */
   (
-    /** Send a pre-built payload verbatim, e.g. the one shown in a preview. */
     | { payload: AlertPayload }
     | ({ payload?: undefined } & TestWebhookPayloadOptions)
   )
@@ -243,8 +207,10 @@ export async function sendTestWebhook(
       ? options.payload
       : buildTestWebhookPayload(options)
 
-  const externalSignal = typeof signalOrTimeoutMs === 'number' ? undefined : signalOrTimeoutMs
-  const timeoutMs = typeof signalOrTimeoutMs === 'number' ? signalOrTimeoutMs : 10000
+  const externalSignal =
+    typeof signalOrTimeoutMs === 'number' ? undefined : signalOrTimeoutMs
+  const timeoutMs =
+    typeof signalOrTimeoutMs === 'number' ? signalOrTimeoutMs : 10000
 
   const internalController = new AbortController()
   let timedOut = false
@@ -259,7 +225,9 @@ export async function sendTestWebhook(
   const onCallerAbort = () => {
     clearTimeout(timeoutId)
     if (!combinedController.signal.aborted) {
-      combinedController.abort(externalSignal?.reason || new Error('cancelled by caller'))
+      combinedController.abort(
+        externalSignal?.reason || new Error('cancelled by caller')
+      )
     }
   }
 
@@ -271,18 +239,25 @@ export async function sendTestWebhook(
 
   if (externalSignal?.aborted) {
     clearTimeout(timeoutId)
-    combinedController.abort(externalSignal.reason || new Error('cancelled by caller'))
+    combinedController.abort(
+      externalSignal.reason || new Error('cancelled by caller')
+    )
   } else {
     externalSignal?.addEventListener('abort', onCallerAbort, { once: true })
-    internalController.signal.addEventListener('abort', onTimeoutAbort, { once: true })
+    internalController.signal.addEventListener('abort', onTimeoutAbort, {
+      once: true,
+    })
   }
 
   const signal = combinedController.signal
 
   try {
     const body = JSON.stringify(payload)
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-    if (secret) headers[SIGNATURE_HEADER] = await signWebhookPayload(secret, body)
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    }
+    if (secret)
+      headers[SIGNATURE_HEADER] = await signWebhookPayload(secret, body)
 
     // In browser production, route through server proxy to avoid CORS failures (#23)
     const isBrowser = typeof window !== 'undefined'
@@ -293,7 +268,14 @@ export async function sendTestWebhook(
       res = await fetch('/api/test-webhook', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: webhookUrl, payload, secret }),
+        // The proxy builds the payload itself from these fields.
+        body: JSON.stringify({
+          url: webhookUrl,
+          contractId: payload.contract_id,
+          network: payload.network,
+          rule: ruleFromPayload(payload),
+          secret,
+        }),
         signal,
       })
     } else {

@@ -1,13 +1,18 @@
-'use client';
+'use client'
 
-import { useState } from 'react';
+import { useState } from 'react'
+import type { AlertRule, Network } from '@/types'
 
-type TestStatus = 'idle' | 'loading' | 'success' | 'error';
+type TestStatus = 'idle' | 'loading' | 'success' | 'error'
 
 interface WebhookTestButtonProps {
-  url: string;
-  disabled?: boolean;
-  className?: string;
+  url: string
+  /** The proxy builds the test payload from these (#261). */
+  contractId: string
+  network: Network
+  rule?: AlertRule
+  disabled?: boolean
+  className?: string
 }
 
 /**
@@ -18,41 +23,46 @@ interface WebhookTestButtonProps {
  */
 export default function WebhookTestButton({
   url,
+  contractId,
+  network,
+  rule,
   disabled = false,
   className = '',
 }: WebhookTestButtonProps) {
-  const [status, setStatus] = useState<TestStatus>('idle');
-  const [message, setMessage] = useState<string>('');
+  const [status, setStatus] = useState<TestStatus>('idle')
+  const [message, setMessage] = useState<string>('')
 
   const handleTest = async () => {
     if (!url) {
-      setStatus('error');
-      setMessage('Enter a webhook URL first.');
-      return;
+      setStatus('error')
+      setMessage('Enter a webhook URL first.')
+      return
     }
 
-    setStatus('loading');
-    setMessage('');
+    setStatus('loading')
+    setMessage('')
 
     try {
       const res = await fetch('/api/webhooks/test', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url }),
-      });
+        body: JSON.stringify({ url, contractId, network, rule }),
+      })
 
       if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data?.error || `Request failed (${res.status})`);
+        const data = await res.json().catch(() => ({}))
+        throw new Error(data?.error || `Request failed (${res.status})`)
       }
 
-      setStatus('success');
-      setMessage('Test webhook delivered successfully.');
+      setStatus('success')
+      setMessage('Test webhook delivered successfully.')
     } catch (err) {
-      setStatus('error');
-      setMessage(err instanceof Error ? err.message : 'Failed to send test webhook.');
+      setStatus('error')
+      setMessage(
+        err instanceof Error ? err.message : 'Failed to send test webhook.'
+      )
     }
-  };
+  }
 
   return (
     <div className={`flex flex-col gap-2 ${className}`}>
@@ -68,9 +78,7 @@ export default function WebhookTestButton({
       {status === 'success' && (
         <p className="text-sm text-green-600">{message}</p>
       )}
-      {status === 'error' && (
-        <p className="text-sm text-red-600">{message}</p>
-      )}
+      {status === 'error' && <p className="text-sm text-red-600">{message}</p>}
     </div>
-  );
+  )
 }

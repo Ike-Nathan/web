@@ -1,89 +1,172 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { signWebhookPayload, SIGNATURE_HEADER } from '@/lib/webhookSignature'
+import { buildTestWebhookPayload } from '@/lib/api'
+import { isValidContractId } from '@/lib/stellar'
+import { classifyHost, isIpLiteral } from '@/lib/ipRanges'
+import {
+  BlockedAddressError,
+  createRateLimiter,
+  deliverWebhook,
+  resolvePublicAddresses,
+} from '@/lib/webhookProxy'
+import { parseAlertRule, type AlertRule, type Network } from '@/types'
 
-// SSRF prevention: block local and private network addresses
-const BLOCKED_HOSTNAMES = new Set(['localhost', '127.0.0.1', '0.0.0.0', '::1'])
+const NETWORKS: Network[] = ['mainnet', 'testnet', 'futurenet']
+/** Request bodies are small ({ url, contractId, network, rule, secret }). */
+const MAX_BODY_BYTES = 4096
+const MAX_SECRET_LENGTH = 256
+const RATE_LIMIT = 10
+const RATE_WINDOW_MS = 60_000
+const TIMEOUT_MS = 10000
 
-function isPrivateIp(hostname: string): boolean {
-  if (BLOCKED_HOSTNAMES.has(hostname.toLowerCase())) return true
-  // Check private IP ranges
-  const ipv4Regex = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/
-  const match = hostname.match(ipv4Regex)
-  if (match) {
-    const [, a, b] = match.map(Number)
-    if (a === 10) return true
-    if (a === 127) return true
-    if (a === 169 && b === 254) return true
-    if (a === 172 && b >= 16 && b <= 31) return true
-    if (a === 192 && b === 168) return true
-    if (a === 0) return true
+const rateLimit = createRateLimiter(RATE_LIMIT, RATE_WINDOW_MS)
+
+const fail = (status: number, error: string, headers?: HeadersInit) =>
+  NextResponse.json({ ok: false, error }, { status, headers })
+
+/** Only the dashboard itself may use the proxy (#261). */
+function isSameOrigin(req: NextRequest): boolean {
+  const site = req.headers.get('sec-fetch-site')
+  if (site) return site === 'same-origin'
+  const origin = req.headers.get('origin')
+  const host = req.headers.get('x-forwarded-host') ?? req.headers.get('host')
+  if (!origin || !host) return false
+  try {
+    return new URL(origin).host === host
+  } catch {
+    return false
   }
-  return false
+}
+
+function clientIp(req: NextRequest): string {
+  return (
+    req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ||
+    req.headers.get('x-real-ip') ||
+    req.ip ||
+    'unknown'
+  )
 }
 
 export async function POST(req: NextRequest) {
   const startTime = Date.now()
+
+  if (!isSameOrigin(req))
+    return fail(403, 'Cross-origin requests are not allowed')
+
+  const limit = rateLimit(clientIp(req))
+  if (!limit.allowed) {
+    return fail(429, 'Too many test webhook requests', {
+      'Retry-After': String(Math.ceil(limit.retryAfterMs / 1000)),
+    })
+  }
+
+  if (Number(req.headers.get('content-length') ?? 0) > MAX_BODY_BYTES) {
+    return fail(413, 'Request body too large')
+  }
+  let data: Record<string, unknown>
   try {
-    const data = await req.json()
-    const { url, payload, secret } = data
+    const text = await req.text()
+    if (Buffer.byteLength(text) > MAX_BODY_BYTES)
+      return fail(413, 'Request body too large')
+    data = JSON.parse(text)
+    if (typeof data !== 'object' || data === null)
+      throw new Error('not an object')
+  } catch {
+    return fail(400, 'Malformed request body')
+  }
 
-    if (!url || typeof url !== 'string') {
-      return NextResponse.json({ ok: false, error: 'A valid url is required' }, { status: 400 })
-    }
+  const { url, contractId, network, rule, secret } = data
+  if (!url || typeof url !== 'string')
+    return fail(400, 'A valid url is required')
+  if (typeof contractId !== 'string' || !isValidContractId(contractId)) {
+    return fail(400, 'A valid contractId is required')
+  }
+  if (!NETWORKS.includes(network as Network))
+    return fail(400, 'A valid network is required')
+  let parsedRule: AlertRule | undefined
+  if (rule !== undefined && rule !== null) {
+    parsedRule = parseAlertRule(rule) ?? undefined
+    if (!parsedRule) return fail(400, 'Invalid rule')
+  }
+  if (
+    secret !== undefined &&
+    (typeof secret !== 'string' || secret.length > MAX_SECRET_LENGTH)
+  ) {
+    return fail(400, 'Invalid secret')
+  }
 
-    let parsedUrl: URL
+  let parsedUrl: URL
+  try {
+    parsedUrl = new URL(url)
+  } catch {
+    return fail(400, 'Invalid URL format')
+  }
+  if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
+    return fail(400, 'Only http and https protocols are supported')
+  }
+
+  // SSRF prevention (#259, #260): reject non-public IP literals and names that
+  // resolve to any non-public address. deliverWebhook re-checks at connect time.
+  if (classifyHost(parsedUrl.hostname) !== 'public') {
+    return fail(403, 'Private and loopback target URLs are blocked')
+  }
+  if (!isIpLiteral(parsedUrl.hostname)) {
     try {
-      parsedUrl = new URL(url)
-    } catch {
-      return NextResponse.json({ ok: false, error: 'Invalid URL format' }, { status: 400 })
-    }
-
-    if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
-      return NextResponse.json({ ok: false, error: 'Only http and https protocols are supported' }, { status: 400 })
-    }
-
-    if (isPrivateIp(parsedUrl.hostname)) {
-      return NextResponse.json({ ok: false, error: 'Private and loopback target URLs are blocked' }, { status: 403 })
-    }
-
-    const bodyString = typeof payload === 'string' ? payload : JSON.stringify(payload ?? {})
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-    if (secret) {
-      headers[SIGNATURE_HEADER] = await signWebhookPayload(secret, bodyString)
-    }
-
-    const controller = new AbortController()
-    const timeoutId = setTimeout(() => controller.abort(), 10000)
-
-    try {
-      const res = await fetch(url, {
-        method: 'POST',
-        headers,
-        body: bodyString,
-        signal: controller.signal,
-      })
-      clearTimeout(timeoutId)
-      const durationMs = Date.now() - startTime
-      return NextResponse.json({
-        status: res.status,
-        ok: res.ok,
-        durationMs,
-      })
-    } catch (err: any) {
-      clearTimeout(timeoutId)
-      const durationMs = Date.now() - startTime
-      if (err?.name === 'AbortError') {
-        return NextResponse.json(
-          { status: 504, ok: false, durationMs, error: 'Webhook request timed out' },
-          { status: 504 }
-        )
+      await resolvePublicAddresses(parsedUrl.hostname)
+    } catch (err) {
+      if (err instanceof BlockedAddressError) {
+        return fail(403, 'Private and loopback target URLs are blocked')
       }
+      return fail(400, 'Could not resolve the webhook host')
+    }
+  }
+
+  // The payload is always built here, never forwarded from the caller (#261).
+  const bodyString = JSON.stringify(
+    buildTestWebhookPayload({
+      contractId,
+      network: network as Network,
+      rule: parsedRule,
+    })
+  )
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+  if (typeof secret === 'string' && secret) {
+    headers[SIGNATURE_HEADER] = await signWebhookPayload(secret, bodyString)
+  }
+
+  try {
+    const res = await deliverWebhook(parsedUrl, bodyString, headers, TIMEOUT_MS)
+    const durationMs = Date.now() - startTime
+    return NextResponse.json({
+      status: res.status,
+      ok: res.status >= 200 && res.status < 300,
+      durationMs,
+    })
+  } catch (error) {
+    const durationMs = Date.now() - startTime
+    if (error instanceof BlockedAddressError) {
+      return fail(403, 'Private and loopback target URLs are blocked')
+    }
+    const err = error as { name?: string; message?: string } | undefined
+    if (err?.name === 'TimeoutError') {
       return NextResponse.json(
-        { status: 500, ok: false, durationMs, error: err?.message || 'Failed to deliver webhook' },
-        { status: 500 }
+        {
+          status: 504,
+          ok: false,
+          durationMs,
+          error: 'Webhook request timed out',
+        },
+        { status: 504 }
       )
     }
-  } catch (err: any) {
-    return NextResponse.json({ ok: false, error: 'Malformed request body' }, { status: 400 })
+    return NextResponse.json(
+      {
+        status: 500,
+        ok: false,
+        durationMs,
+        error: err?.message || 'Failed to deliver webhook',
+      },
+      { status: 500 }
+    )
   }
 }

@@ -1,6 +1,7 @@
 import { Network } from '@/types'
 import { Address, xdr } from '@stellar/stellar-sdk'
 import { StrKey } from '@stellar/stellar-sdk'
+import { classifyHost } from '@/lib/ipRanges'
 
 export const HORIZON_URLS: Record<Network, string> = {
   mainnet: 'https://horizon.stellar.org',
@@ -31,7 +32,11 @@ export function horizonUrl(network: Network): string {
     testnet: process.env.NEXT_PUBLIC_HORIZON_URL_TESTNET,
     futurenet: process.env.NEXT_PUBLIC_HORIZON_URL_FUTURENET,
   }[network]
-  return clean(perNetwork) ?? clean(process.env.NEXT_PUBLIC_HORIZON_URL) ?? HORIZON_URLS[network]
+  return (
+    clean(perNetwork) ??
+    clean(process.env.NEXT_PUBLIC_HORIZON_URL) ??
+    HORIZON_URLS[network]
+  )
 }
 
 /** Soroban RPC URL for a network; same precedence as horizonUrl. */
@@ -42,7 +47,9 @@ export function sorobanRpcUrl(network: Network): string {
     futurenet: process.env.NEXT_PUBLIC_SOROBAN_RPC_URL_FUTURENET,
   }[network]
   return (
-    clean(perNetwork) ?? clean(process.env.NEXT_PUBLIC_SOROBAN_RPC_URL) ?? SOROBAN_RPC_URLS[network]
+    clean(perNetwork) ??
+    clean(process.env.NEXT_PUBLIC_SOROBAN_RPC_URL) ??
+    SOROBAN_RPC_URLS[network]
   )
 }
 
@@ -53,7 +60,10 @@ export function explorerTxUrl(network: Network, txHash: string): string {
   return `${STELLAR_EXPERT_BASE}/${net}/tx/${txHash}`
 }
 
-export function explorerContractUrl(network: Network, contractId: string): string {
+export function explorerContractUrl(
+  network: Network,
+  contractId: string
+): string {
   const net = network === 'mainnet' ? 'public' : network
   return `${STELLAR_EXPERT_BASE}/${net}/contract/${contractId}`
 }
@@ -77,7 +87,9 @@ export function isNetwork(value: string | undefined): value is Network {
 /**
  * Maps Freighter network strings (e.g. PUBLIC, TESTNET, FUTURENET) to the app Network type (#8).
  */
-export function mapFreighterNetwork(freighterNetwork: string | null | undefined): Network | null {
+export function mapFreighterNetwork(
+  freighterNetwork: string | null | undefined
+): Network | null {
   if (!freighterNetwork) return null
   const normalized = freighterNetwork.trim().toUpperCase()
   switch (normalized) {
@@ -129,7 +141,8 @@ export function normalizeContractId(input: string): NormalizedContractIdResult {
   if (explorerMatch) {
     const rawNetwork = explorerMatch[1].toLowerCase()
     const rawId = explorerMatch[2].trim().toUpperCase()
-    const network: Network = rawNetwork === 'public' ? 'mainnet' : (rawNetwork as Network)
+    const network: Network =
+      rawNetwork === 'public' ? 'mainnet' : (rawNetwork as Network)
     return {
       contractId: rawId,
       network,
@@ -152,10 +165,12 @@ export function normalizeContractId(input: string): NormalizedContractIdResult {
 export function buildContractInstanceLedgerKey(contractId: string): string {
   try {
     const address = Address.fromString(contractId)
+    /* eslint-disable @typescript-eslint/no-explicit-any */
     const durability =
       typeof (xdr.ContractDataDurability as any)?.persistent === 'function'
         ? (xdr.ContractDataDurability as any).persistent()
         : (xdr.ContractDataDurability as any)?.persistent
+    /* eslint-enable @typescript-eslint/no-explicit-any */
     const ledgerKey = xdr.LedgerKey.contractData(
       new xdr.LedgerKeyContractData({
         contract: address.toScAddress(),
@@ -232,7 +247,10 @@ export function isValidUrl(url: string): boolean {
 }
 
 /** #117: Validate webhook URLs with security checks. Returns error/warning code or null if valid. */
-export function validateWebhookUrl(url: string, network: Network): string | null {
+export function validateWebhookUrl(
+  url: string,
+  network: Network
+): string | null {
   if (!isValidUrl(url)) return 'invalid_url'
 
   try {
@@ -241,24 +259,15 @@ export function validateWebhookUrl(url: string, network: Network): string | null
     // Reject URLs with embedded credentials
     if (u.username || u.password) return 'credentials_in_url'
 
+    // Reject loopback, private, link-local and other reserved ranges (#260)
+    const hostClass = classifyHost(u.hostname)
+    if (hostClass === 'loopback') return 'loopback_not_allowed'
+    if (hostClass === 'linkLocal') return 'link_local_not_allowed'
+    if (hostClass === 'private') return 'private_ip_not_allowed'
+
     // Warn on plain http (block for mainnet)
-    if (u.protocol === 'http:') return network === 'mainnet' ? 'http_on_mainnet' : 'http_warning'
-
-    // Reject localhost and private IP ranges
-    const hostname = u.hostname || ''
-    if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]') {
-      return 'loopback_not_allowed'
-    }
-
-    // Reject private IP ranges (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, fe80::/10)
-    if (/^(10|172\.(1[6-9]|2[0-9]|3[01])|192\.168)\./.test(hostname) ||
-        hostname.startsWith('fc') || hostname.startsWith('fd') ||
-        hostname.startsWith('fe80')) {
-      return 'private_ip_not_allowed'
-    }
-
-    // Reject link-local addresses (169.254.0.0/16, fe80::/10)
-    if (/^169\.254\./.test(hostname)) return 'link_local_not_allowed'
+    if (u.protocol === 'http:')
+      return network === 'mainnet' ? 'http_on_mainnet' : 'http_warning'
 
     return null
   } catch {
