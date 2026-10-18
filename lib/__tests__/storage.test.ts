@@ -253,8 +253,6 @@ describe('addAlert / getAlerts — newest-first ordering', () => {
     addAlert(alert1);
     const alerts = getAlerts('c1');
     expect(alerts.map((a) => a.timestamp)).toEqual([3, 2, 1]);
-    const alerts = getAlerts('c1', 'testnet');
-    expect(alerts.map((a) => (a as { id?: string }).id)).toEqual(['a1', 'a2', 'a3']);
   });
 
   it('returns empty array when no alerts exist for a contract (empty fallback)', () => {
@@ -484,11 +482,33 @@ describe('exportAllStorageData', () => {
 });
 
 describe('alerts keyed by (contract_id, network)', () => {
-  const 
+  it('keeps alerts for the same contract_id on different networks separate', () => {
+    addAlert({ ...alert1, network: 'mainnet' });
+    addAlert({ ...alert2, network: 'testnet' });
+    expect(getAlerts('c1', 'mainnet')).toHaveLength(1);
+    expect(getAlerts('c1', 'testnet')).toHaveLength(1);
+  });
+});
+
+describe('storage write failures', () => {
+  const quotaError = () => new DOMException('QuotaExceededError', 'QuotaExceededError');
+
+  afterEach(() => {
+    // Restore the mock's setItem implementation for subsequent tests.
+    localStorageMock.setItem = (key: string, value: string) => {
+      (localStorageMock as unknown as { _store?: Record<string, string> })._store;
+      Object.defineProperty(localStorageMock, key, { value, configurable: true });
+    };
+  });
 
   it('returns false instead of throwing when storage always fails', () => {
+    const original = localStorageMock.setItem;
     localStorageMock.setItem = () => { throw quotaError(); };
-    expect(saveContract(contract1)).toBe(false);
+    try {
+      expect(saveContract(contract1)).toBe(false);
+    } finally {
+      localStorageMock.setItem = original;
+    }
   });
 });
 /* … truncated 1606 chars — edit only what you need near the top … */

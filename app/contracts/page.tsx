@@ -10,10 +10,10 @@ import ContractCard from '@/components/ContractCard'
 import EmptyState from '@/components/EmptyState'
 import ContractsSkeleton from '@/components/ContractsSkeleton'
 import { NETWORK_COLORS } from '@/components/NetworkBadge'
+import { sortContracts, SortOption } from '@/lib/contractSort'
 
 type ViewMode = 'flat' | 'grouped'
 type NetworkFilter = 'all' | Network
-type SortOption = 'newest' | 'oldest' | 'label-asc' | 'label-desc'
 
 const PAGE_SIZE = 12
 const HIGHLIGHT_DURATION_MS = 6000
@@ -84,21 +84,6 @@ export function resolveInitialPrefs(params: {
     sortBy: SORT_VALUES.includes(urlSort as SortOption)
       ? (urlSort as SortOption)
       : stored.sortBy ?? 'newest',
-  }
-}
-
-function sortContracts(contracts: WatchedContract[], sortBy: SortOption) {
-  const sorted = [...contracts]
-  switch (sortBy) {
-    case 'oldest':
-      return sorted.sort((a, b) => a.created_at - b.created_at)
-    case 'label-asc':
-      return sorted.sort((a, b) => a.label.localeCompare(b.label))
-    case 'label-desc':
-      return sorted.sort((a, b) => b.label.localeCompare(a.label))
-    case 'newest':
-    default:
-      return sorted.sort((a, b) => b.created_at - a.created_at)
   }
 }
 

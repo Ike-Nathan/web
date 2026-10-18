@@ -29,8 +29,17 @@ export const FREIGHTER_INSTALL_URL = 'https://www.freighter.app/'
 export const FREIGHTER_NOT_INSTALLED = 'Freighter not installed — install the extension and reload'
 export const FREIGHTER_CONNECTION_REJECTED = 'Connection rejected'
 
-/** Upper bound for a single round trip to the extension. */
+/** Upper bound for a single availability probe against the extension. */
 const EXTENSION_TIMEOUT_MS = 2500
+
+/**
+ * Upper bound for requests that wait on the user (e.g. approving the connect
+ * popup). These must not use the short probe timeout, otherwise a slow user is
+ * reported as "not installed".
+ */
+const USER_ACTION_TIMEOUT_MS = 120_000
+
+export const FREIGHTER_REQUEST_TIMED_OUT = 'Request timed out — approve the request in Freighter and try again'
 
 /** Freighter network ids for the networks the dashboard supports. */
 export const FREIGHTER_NETWORK_BY_CHAIN: Record<Network, string> = {
@@ -55,6 +64,14 @@ export class FreighterRejectedError extends Error {
   }
 }
 
+/** The extension is reachable but the request did not settle in time. */
+export class FreighterTimeoutError extends Error {
+  constructor(message = FREIGHTER_REQUEST_TIMED_OUT) {
+    super(message)
+    this.name = 'FreighterTimeoutError'
+  }
+}
+
 export interface FreighterSession {
   publicKey: string
   /** Freighter network id, e.g. `"TESTNET"`. */
@@ -62,9 +79,13 @@ export interface FreighterSession {
   networkPassphrase: string
 }
 
-function withTimeout<T>(request: Promise<T>, ms: number = EXTENSION_TIMEOUT_MS): Promise<T> {
+function withTimeout<T>(
+  request: Promise<T>,
+  ms: number = EXTENSION_TIMEOUT_MS,
+  onTimeout: () => Error = () => new FreighterUnavailableError()
+): Promise<T> {
   return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new FreighterUnavailableError()), ms)
+    const timer = setTimeout(() => reject(onTimeout()), ms)
     request.then(
       (value) => {
         clearTimeout(timer)
@@ -176,7 +197,13 @@ export async function connectFreighter(): Promise<FreighterSession> {
 
   let address = ''
   try {
-    const result = await withTimeout(requestAccess())
+    // The user has to approve the popup, so this must not use the short probe
+    // timeout — a slow approval is not an unavailable extension.
+    const result = await withTimeout(
+      requestAccess(),
+      USER_ACTION_TIMEOUT_MS,
+      () => new FreighterTimeoutError()
+    )
     if (result.error) {
       throw new FreighterRejectedError(apiErrorMessage(result.error, FREIGHTER_CONNECTION_REJECTED))
     }
@@ -185,7 +212,11 @@ export async function connectFreighter(): Promise<FreighterSession> {
     }
     address = result.address
   } catch (error) {
-    if (error instanceof FreighterRejectedError || error instanceof FreighterUnavailableError) {
+    if (
+      error instanceof FreighterRejectedError ||
+      error instanceof FreighterUnavailableError ||
+      error instanceof FreighterTimeoutError
+    ) {
       throw error
     }
     throw new FreighterRejectedError(messageOf(error, FREIGHTER_CONNECTION_REJECTED))

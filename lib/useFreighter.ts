@@ -92,18 +92,6 @@ export function useFreighter() {
       if (err instanceof FreighterUnavailableError) {
         openFreighterInstallPage()
       }
-      const [publicKey, network] = await Promise.all([
-        window.freighter.getPublicKey(),
-        window.freighter.getNetwork(),
-      ])
-      broadcastWalletChange(publicKey)
-      setState({ publicKey, network, loading: false, error: null })
-    } catch {
-      setState((prev) => ({
-        ...prev,
-        loading: false,
-        error: 'Connection rejected',
-      setState((prev) => ({ ...prev, loading: false, error: 'Connection rejected' }))
       setState((prev) => ({
         ...prev,
         loading: false,

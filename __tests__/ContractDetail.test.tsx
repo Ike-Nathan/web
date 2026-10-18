@@ -150,6 +150,9 @@ describe('ContractDetail last modified', () => {
   it('hides the last modified row when updated_at equals created_at', () => {
     const created = '2024-01-01T00:00:00.000Z'
     expect(renderLastModified(created, created)).toBeNull()
+  })
+})
+
 describe('metadata edit discard confirmation', () => {
   // Mirrors the in-app dialog flow that replaced window.confirm in
   // handleCancelMetadataEdit: the dialog resolves to a boolean and the
@@ -339,4 +342,3 @@ describe('ContractDetail alert history lookup regression (#26)', () => {
     expect(alertsByContractId[0].contract_id).toBe(contractId)
   })
 })
-

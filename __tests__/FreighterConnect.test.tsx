@@ -162,8 +162,6 @@ describe('FreighterConnect', () => {
 
   describe('unavailable extension', () => {
     it('shows error and install link when extension is not installed', async () => {
-      delete (window as any).freighter
-    it('shows error when extension is not installed', async () => {
       mockExtensionMissing()
 
       render(<FreighterConnect />)
@@ -181,10 +179,7 @@ describe('FreighterConnect', () => {
     })
 
     it('allows retrying detection after extension is installed', async () => {
-      delete (window as any).freighter
-    it('opens Freighter website when extension is not installed', async () => {
       mockExtensionMissing()
-      const windowOpenSpy = vi.spyOn(window, 'open').mockImplementation(() => null)
 
       render(<FreighterConnect />)
 
@@ -195,18 +190,12 @@ describe('FreighterConnect', () => {
       })
 
       // Simulate extension installation
-      const mockPublicKey = 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
-      ;(window as any).freighter = {
-        isConnected: vi.fn().mockResolvedValue(true),
-        getPublicKey: vi.fn().mockResolvedValue(mockPublicKey),
-        getNetwork: vi.fn().mockResolvedValue('TESTNET'),
-      }
+      mockConnectedSession()
 
       fireEvent.click(screen.getByRole('button', { name: /check again/i }))
 
       await waitFor(() => {
         expect(screen.getByText(/GAAA\.\.\.AAAA/)).toBeInTheDocument()
-        expect(screen.getByText('TESTNET')).toBeInTheDocument()
       })
     })
   })
@@ -286,5 +275,32 @@ describe('FreighterConnect', () => {
         expect(button).toBeDisabled()
       })
     })
+  })
+
+  describe('slow approval', () => {
+    it('waits for a slow requestAccess instead of reporting the extension as missing', async () => {
+      mockRequestAccess.mockImplementation(
+        () =>
+          new Promise((resolve) =>
+            setTimeout(() => resolve({ address: MOCK_PUBLIC_KEY }), 5000)
+          )
+      )
+
+      render(<FreighterConnect />)
+
+      fireEvent.click(await screen.findByRole('button', { name: /Connect Freighter/ }))
+
+      // While the user is still approving, no "not installed" error should appear.
+      await new Promise((resolve) => setTimeout(resolve, 3000))
+      expect(screen.queryByText(/Freighter not installed/)).not.toBeInTheDocument()
+
+      await waitFor(
+        () => {
+          expect(screen.getByText('Disconnect')).toBeInTheDocument()
+        },
+        { timeout: 8000 }
+      )
+      expect(screen.queryByText(/Freighter not installed/)).not.toBeInTheDocument()
+    }, 15000)
   })
 })

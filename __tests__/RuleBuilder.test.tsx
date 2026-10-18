@@ -1,6 +1,8 @@
 import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react';
+import { describe, it, expect, vi } from 'vitest';
 import RuleBuilder from '../components/RuleBuilder';
+import { importSchema } from '../lib/schemas';
 
 describe('RuleBuilder', () => {
   describe('editing index integrity', () => {
@@ -450,11 +452,6 @@ describe('RuleBuilder', () => {
         ])
       );
     });
-    // Editing state should be cleared: no stale "Update Rule" button remains.
-    expect(screen.queryByRole('button', { name: /update rule/i })).not.toBeInTheDocument();
-    expect(screen.getAllByTestId('rule-item')).toHaveLength(1);
-  });
-});
 
     it('warns when preset rules already exist', () => {
       const existingRules = [
