@@ -1,25 +1,14 @@
 'use client'
 
-import { useState, useRef, useEffect, useCallback } from 'react'
-import { useState, useRef, useEffect, useMemo } from 'react'
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
-import { AlertRule, Network, WatchedContract } from '@/types'
+import { AlertPayload, AlertRule, Network, WatchedContract } from '@/types'
 import { isValidContractId, isValidUrl, normalizeContractId, contractExists } from '@/lib/stellar'
 import { syncSaveContract } from '@/lib/contractSync'
 import { addContract, saveContract, getContracts } from '@/lib/storage'
 import { generateWebhookSecret } from '@/lib/webhookSignature'
-import { AlertPayload, AlertRule, Network, WatchedContract } from '@/types'
-import { isValidContractId, isValidUrl } from '@/lib/stellar'
-import { addContract, getContracts, saveContract } from '@/lib/storage'
-import { syncSaveContract } from '@/lib/contractSync'
-import { buildTestWebhookPayload, sendTestWebhook } from '@/lib/api'
-import { syncSaveContract } from '@/lib/contractSync'
-import { addContract, getContracts } from '@/lib/storage'
-import { sendTestWebhook } from '@/lib/api'
 import { getWalletNetwork, isNetworkMatch } from '@/lib/freighter'
-import { addContract, getContracts, saveContract } from '@/lib/storage'
 import { buildTestWebhookPayload, describeRule, sendTestWebhook } from '@/lib/api'
-import { generateWebhookSecret } from '@/lib/webhookSignature'
 import { generateId } from '@/lib/id'
 import CopyButton from '@/components/CopyButton'
 import ContractVerification from '@/components/ContractVerification'
@@ -413,24 +402,7 @@ export default function NewContractPage() {
       setErrors((prev) => ({ ...prev, webhook_url: 'Webhook URL is required to test' }))
       return
     }
-    setTestStatus('sending')
-    setTestError(null)
-    try {
-      const selectedRule = rules[selectedRuleIndex]
-      const res = await sendTestWebhook(
-        webhookUrl.trim(),
-        contractId.trim() || 'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
-        network,
-        10000,
-        webhookSecret || undefined,
-        { rule: selectedRule }
-      )
     const url = webhookUrl.trim()
-    if (!url) {
-      setTestStatus('error')
-      setTestError('Enter a webhook URL first.')
-      return
-    }
     if (!isValidUrl(url)) {
       setTestStatus('error')
       setTestError('Must be a valid http/https URL')
@@ -462,11 +434,6 @@ export default function NewContractPage() {
       } else {
         setTestStatus('error')
         setTestError(`Delivery failed with HTTP status ${res.status}`)
-      }
-    } catch (err: any) {
-      setTestStatus('error')
-      setTestError(err?.message || 'Failed to send test webhook')
-        setTestError(`Receiver responded with HTTP ${res.status}.`)
       }
     } catch (err) {
       if ((err as { name?: string })?.name === 'AbortError') return
@@ -742,11 +709,11 @@ export default function NewContractPage() {
             {showPayloadPreview && (
               <pre className="mt-2 p-2 rounded bg-zinc-950 border border-zinc-800 text-[11px] text-zinc-300 overflow-x-auto">
                 {JSON.stringify(
-                  buildTestWebhookPayload(
-                    contractId.trim() || 'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+                  buildTestWebhookPayload({
+                    contractId: contractId.trim(),
                     network,
-                    { rule: rules[selectedRuleIndex] }
-                  ),
+                    rule: rules[selectedRuleIndex],
+                  }),
                   null,
                   2
                 )}

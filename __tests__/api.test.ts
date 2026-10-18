@@ -160,35 +160,6 @@ describe('sendTestWebhook', () => {
       label: 'Test Alert',
       contract_id: 'CBCDEF',
       network: 'testnet',
-      rule_triggered: 'AnyTransaction',
-      is_test: true,
-    })
-    expect(payload.transaction_hash).toMatch(/^[0-9a-f]{64}$/)
-    expect(payload.horizon_link).toContain(`/transactions/${payload.transaction_hash}`)
-  })
-
-  it('sends webhook with rule-aware payload for FunctionCalled and LargeTransfer', async () => {
-    ;(global.fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({ ok: true })
-
-    await sendTestWebhook('https://example.com/webhook', 'CBCDEF', 'mainnet', 10000, undefined, {
-      rule: { id: 'r1', rule_type: 'FunctionCalled', function_name: 'swap' },
-    })
-
-    const call1 = (global.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0]
-    const payload1 = JSON.parse(call1[1].body)
-    expect(payload1.rule_triggered).toBe('FunctionCalled')
-    expect(payload1.function_name).toBe('swap')
-    expect(payload1.network).toBe('mainnet')
-    expect(payload1.is_test).toBe(true)
-
-    await sendTestWebhook('https://example.com/webhook', 'CBCDEF', 'testnet', 10000, undefined, {
-      rule: { id: 'r2', rule_type: 'LargeTransfer', min_amount: '50000' },
-    })
-
-    const call2 = (global.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[1]
-    const payload2 = JSON.parse(call2[1].body)
-    expect(payload2.rule_triggered).toBe('LargeTransfer')
-    expect(payload2.amount).toBe('50000')
       rule_triggered: 'FunctionCalled',
       function_name: 'transfer',
       is_test: true,
@@ -233,12 +204,10 @@ describe('sendTestWebhook', () => {
     )
 
     const callerController = new AbortController()
-    const promise = sendTestWebhook(
-      'https://example.com/webhook',
-      'CBCDEF',
-      'testnet',
-      callerController.signal
-    )
+    const promise = sendTestWebhook('https://example.com/webhook', {
+      contractId: 'CBCDEF',
+      signal: callerController.signal,
+    })
 
     vi.advanceTimersByTime(10001)
 
@@ -257,12 +226,10 @@ describe('sendTestWebhook', () => {
     )
 
     const callerController = new AbortController()
-    const promise = sendTestWebhook(
-      'https://example.com/webhook',
-      'CBCDEF',
-      'testnet',
-      callerController.signal
-    )
+    const promise = sendTestWebhook('https://example.com/webhook', {
+      contractId: 'CBCDEF',
+      signal: callerController.signal,
+    })
 
     callerController.abort()
 

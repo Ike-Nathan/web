@@ -491,3 +491,43 @@ function capAlertsPerContract(alerts: AlertPayload[]): AlertPayload[] {
 
   return alerts.filter((alert) => kept.has(alert))
 }
+
+// Subscribes to changes for a given storage key. Fires for same-tab writes
+// (via the `txwatch:storage` CustomEvent dispatched by notifyChange) and for
+// cross-tab writes (via the native `storage` event). Returns an unsubscribe fn.
+function subscribeToKey(key: string, cb: () => void): () => void {
+  if (typeof window === 'undefined') return () => {}
+
+  const handleCustom = (event: Event) => {
+    const detail = (event as CustomEvent<{ key?: string }>).detail
+    if (!detail || detail.key === key) cb()
+  }
+
+  const handleStorage = (event: StorageEvent) => {
+    if (event.key === key || event.key === null) cb()
+  }
+
+  window.addEventListener(STORAGE_EVENT, handleCustom as EventListener)
+  window.addEventListener('storage', handleStorage)
+
+  return () => {
+    window.removeEventListener(STORAGE_EVENT, handleCustom as EventListener)
+    window.removeEventListener('storage', handleStorage)
+  }
+}
+
+export function onAlertsChange(cb: () => void): () => void {
+  return subscribeToKey(ALERTS_KEY, cb)
+}
+
+export function onContractsChange(cb: () => void): () => void {
+  return subscribeToKey(CONTRACTS_KEY, cb)
+}
+
+// Counts alerts recorded since local midnight across all contracts.
+export function getTodayAlertCount(): number {
+  const midnight = new Date()
+  midnight.setHours(0, 0, 0, 0)
+  const startOfDay = midnight.getTime()
+  return load<AlertPayload>(ALERTS_KEY).filter((a) => a.timestamp >= startOfDay).length
+}
