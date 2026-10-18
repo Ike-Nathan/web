@@ -1,4 +1,4 @@
-import { apiFetch } from '@/lib/api'
+import { apiFetch, isApiConfigured } from '@/lib/api'
 import {
   FUNCTION_NAME_REGEX,
   SOROBAN_SYMBOL_MAX_LENGTH,
@@ -93,9 +93,7 @@ export function applyContractFilter(
   return contracts
 }
 
-export function isApiConfigured(): boolean {
-  return Boolean(process.env.NEXT_PUBLIC_API_URL)
-}
+export { isApiConfigured }
 
 export function listContracts(): Promise<WatchedContract[]> {
   return apiFetch<WatchedContract[]>('/contracts')

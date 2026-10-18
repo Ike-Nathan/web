@@ -1,26 +1,15 @@
 'use client'
 
-import { useState, useRef, useEffect, useCallback } from 'react'
 import { useState, useRef, useEffect, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
-import { AlertRule, Network, WatchedContract } from '@/types'
-import { isValidContractId, isValidUrl, normalizeContractId, contractExists } from '@/lib/stellar'
-import { syncSaveContract } from '@/lib/contractSync'
-import { addContract, saveContract, getContracts } from '@/lib/storage'
-import { generateWebhookSecret } from '@/lib/webhookSignature'
 import { AlertPayload, AlertRule, Network, WatchedContract } from '@/types'
-import { isValidContractId, isValidUrl } from '@/lib/stellar'
-import { addContract, getContracts, saveContract } from '@/lib/storage'
+import { isValidContractId, isValidUrl, normalizeContractId } from '@/lib/stellar'
 import { syncSaveContract } from '@/lib/contractSync'
-import { buildTestWebhookPayload, sendTestWebhook } from '@/lib/api'
-import { syncSaveContract } from '@/lib/contractSync'
-import { addContract, getContracts } from '@/lib/storage'
-import { sendTestWebhook } from '@/lib/api'
-import { getWalletNetwork, isNetworkMatch } from '@/lib/freighter'
 import { addContract, getContracts, saveContract } from '@/lib/storage'
 import { buildTestWebhookPayload, describeRule, sendTestWebhook } from '@/lib/api'
 import { generateWebhookSecret } from '@/lib/webhookSignature'
 import { generateId } from '@/lib/id'
+import { parseAlertRule } from '@/lib/alertRules'
 import CopyButton from '@/components/CopyButton'
 import ContractVerification from '@/components/ContractVerification'
 import { useFreighterConnection } from '@/lib/useFreighterConnection'
@@ -58,9 +47,12 @@ export default function NewContractPage() {
   const [testError, setTestError] = useState<string | null>(null)
   const [errors, setErrors] = useState<FormErrors>({})
   const [saving, setSaving] = useState(false)
-  const [isCheckingContract, setIsCheckingContract] = useState(false)
-  const [contractNotFoundWarning, setContractNotFoundWarning] = useState<string | null>(null)
-  const [overrideNotFound, setOverrideNotFound] = useState(false)
+  const [verificationStatus, setVerificationStatus] = useState<
+    'idle' | 'checking' | 'found' | 'not_found' | 'error'
+  >('idle')
+  const [verificationReason, setVerificationReason] = useState<string | null>(null)
+  const [verificationOverridden, setVerificationOverridden] = useState(false)
+  const [prefillNotice, setPrefillNotice] = useState<string | null>(null)
   const [showDiscardModal, setShowDiscardModal] = useState(false)
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
@@ -160,7 +152,24 @@ export default function NewContractPage() {
       }
       if (typeof data.label === 'string') setLabel(data.label)
       if (typeof data.webhook_url === 'string') setWebhookUrl(data.webhook_url)
-      if (Array.isArray(data.rules)) setRules(data.rules)
+      if (Array.isArray(data.rules)) {
+        const validRules: AlertRule[] = []
+        let dropped = 0
+        for (const raw of data.rules) {
+          const parsed = parseAlertRule(raw)
+          if (parsed) {
+            validRules.push(parsed)
+          } else {
+            dropped += 1
+          }
+        }
+        setRules(validRules)
+        if (dropped > 0) {
+          setPrefillNotice(
+            `Skipped ${dropped} invalid rule${dropped === 1 ? '' : 's'} from the duplicated contract.`
+          )
+        }
+      }
     } catch {
       // ignore malformed pre-fill data
     }
@@ -271,29 +280,6 @@ export default function NewContractPage() {
     return Object.keys(validate()).length === 0
   }
 
-  async function checkContractOnNetwork(id: string, targetNetwork: Network): Promise<boolean> {
-    if (!id || !isValidContractId(id)) {
-      setContractNotFoundWarning(null)
-      return true
-    }
-    setIsCheckingContract(true)
-    try {
-      const exists = await contractExists(targetNetwork, id)
-      if (!exists) {
-        setContractNotFoundWarning(`Contract not found on ${targetNetwork}`)
-        return false
-      } else {
-        setContractNotFoundWarning(null)
-        return true
-      }
-    } catch {
-      setContractNotFoundWarning(null)
-      return true
-    } finally {
-      setIsCheckingContract(false)
-    }
-  }
-
   function handleContractIdBlur() {
     const norm = normalizeContractId(contractId)
     let updatedId = contractId.trim()
@@ -306,9 +292,6 @@ export default function NewContractPage() {
       targetNetwork = norm.network
       setNetwork(targetNetwork)
       checkNetworkMismatch(targetNetwork)
-    }
-    if (updatedId && isValidContractId(updatedId)) {
-      void checkContractOnNetwork(updatedId, targetNetwork)
     }
   }
 
@@ -325,9 +308,6 @@ export default function NewContractPage() {
         targetNetwork = norm.network
         setNetwork(targetNetwork)
         checkNetworkMismatch(targetNetwork)
-      }
-      if (isValidContractId(norm.contractId)) {
-        void checkContractOnNetwork(norm.contractId, targetNetwork)
       }
     }
   }
@@ -368,15 +348,9 @@ export default function NewContractPage() {
       return
     }
 
-    // If contract does not exist on network and user has not checked override, prevent saving and warn
-    if (!overrideNotFound) {
-      setIsCheckingContract(true)
-      const exists = await contractExists(network, contractId.trim())
-      setIsCheckingContract(false)
-      if (!exists) {
-        setContractNotFoundWarning(`Contract not found on ${network}`)
-        return
-      }
+    // Block saving only on an authoritative not_found result without an override.
+    if (verificationStatus === 'not_found' && !verificationOverridden) {
+      return
     }
 
     setSaving(true)
@@ -510,7 +484,15 @@ export default function NewContractPage() {
           <p className="text-sm text-zinc-500 mt-1">Register a Soroban contract to monitor</p>
         </div>
 
-        <div className="space-y-5">
+        <form onSubmit={handleSave} noValidate className="space-y-5">
+          {prefillNotice && (
+            <div
+              className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-lg text-xs text-amber-300"
+              data-testid="prefill-notice"
+            >
+              {prefillNotice}
+            </div>
+          )}
           {/* Label */}
           <div>
             <label className="block text-sm font-medium text-zinc-300 mb-1.5">Label</label>
@@ -537,38 +519,33 @@ export default function NewContractPage() {
             <input
               ref={contractIdInputRef}
               type="text"
+              autoComplete="off"
               placeholder="CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
               value={contractId}
               onChange={(e) => {
                 setContractId(e.target.value)
                 setErrors((prev) => ({ ...prev, contract_id: undefined }))
-                setContractNotFoundWarning(null)
               }}
               onBlur={handleContractIdBlur}
               onPaste={handleContractIdPaste}
               className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2.5 text-sm text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-indigo-500 transition-colors font-mono"
             />
             {errors.contract_id && <p className="text-xs text-red-400 mt-1">{errors.contract_id}</p>}
-            {isCheckingContract && (
-              <p className="text-xs text-zinc-400 mt-1 flex items-center gap-1.5" data-testid="contract-checking">
-                <span className="inline-block w-3 h-3 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />
-                Verifying contract on {network}…
+            <ContractVerification
+              network={network}
+              contractId={contractId}
+              className="mt-1"
+              onStatusChange={(status, reason) => {
+                setVerificationStatus(status)
+                setVerificationReason(reason ?? null)
+              }}
+              overridden={verificationOverridden}
+              onOverrideChange={setVerificationOverridden}
+            />
+            {verificationStatus === 'not_found' && !verificationOverridden && (
+              <p className="text-xs text-amber-400 mt-1" data-testid="verification-blocking">
+                {verificationReason || `Contract not found on ${network}`}. Tick the override above to save anyway.
               </p>
-            )}
-            {contractNotFoundWarning && (
-              <div className="mt-2 p-3 bg-amber-500/10 border border-amber-500/30 rounded-lg text-xs text-amber-300 space-y-2" data-testid="contract-not-found-warning">
-                <p>⚠️ Contract not found on {network}. Deployments on other networks or invalid IDs produce zero alerts.</p>
-                <label className="flex items-center gap-2 cursor-pointer text-amber-200">
-                  <input
-                    type="checkbox"
-                    checked={overrideNotFound}
-                    onChange={(e) => setOverrideNotFound(e.target.checked)}
-                    className="rounded border-zinc-700 bg-zinc-900 text-indigo-600 focus:ring-0"
-                    data-testid="override-not-found-checkbox"
-                  />
-                  <span>Register anyway (override network check)</span>
-                </label>
-              </div>
             )}
           </div>
       <div>
@@ -685,10 +662,6 @@ export default function NewContractPage() {
                 const n = e.target.value as Network
                 setNetwork(n)
                 checkNetworkMismatch(n)
-                setContractNotFoundWarning(null)
-                if (isValidContractId(contractId.trim())) {
-                  void checkContractOnNetwork(contractId.trim(), n)
-                }
               }}
               className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2.5 text-sm text-zinc-100 focus:outline-none focus:border-indigo-500 transition-colors"
             >
@@ -705,6 +678,7 @@ export default function NewContractPage() {
             <input
               ref={webhookUrlInputRef}
               type="text"
+              inputMode="url"
               placeholder="https://example.com/webhook"
               value={webhookUrl}
               onChange={(e) => { setWebhookUrl(e.target.value); setErrors((prev) => ({ ...prev, webhook_url: undefined })) }}
@@ -779,8 +753,7 @@ export default function NewContractPage() {
 
           <div className="flex gap-3 pt-2">
             <button
-              type="button"
-              onClick={handleSave}
+              type="submit"
               disabled={saving}
               className="flex-1 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium rounded-lg px-4 py-2.5 transition-colors"
             >
@@ -798,8 +771,7 @@ export default function NewContractPage() {
         </div>
         <div className="flex items-center gap-3 pt-2">
           <button
-            type="button"
-            onClick={handleSave}
+            type="submit"
             disabled={saving || !isFormValid()}
             className="flex-1 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium rounded-lg px-4 py-2.5 transition-colors"
           >
@@ -821,6 +793,7 @@ export default function NewContractPage() {
             {testStatus === 'sending' ? 'Testing…' : 'Test Webhook'}
           </button>
         </div>
+        </form>
         {testStatus === 'ok' && <p className="text-xs text-emerald-400">Webhook delivered successfully.</p>}
         {testStatus === 'error' && <p className="text-xs text-red-400">{testError}</p>}
 

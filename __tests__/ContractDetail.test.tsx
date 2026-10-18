@@ -307,6 +307,62 @@ describe('Modal keyboard interaction', () => {
   })
 })
 
+describe('ContractDetail duplicate action (#200)', () => {
+  const buildDuplicatePrefill = (contract: {
+    label: string
+    webhook_url: string
+    rules: AlertRule[]
+  }) => ({
+    label: `${contract.label} (copy)`,
+    webhook_url: contract.webhook_url,
+    rules: contract.rules.map((rule) => ({ ...rule })),
+  })
+
+  const runDuplicateAction = (
+    contract: { label: string; webhook_url: string; rules: AlertRule[] },
+    sessionStorage: {
+      setItem: (key: string, value: string) => void
+      getItem: (key: string) => string | null
+    },
+    navigate: (path: string) => void
+  ) => {
+    const prefill = buildDuplicatePrefill(contract)
+    sessionStorage.setItem('txwatch_duplicate_contract', JSON.stringify(prefill))
+    navigate('/contracts/new')
+  }
+
+  it('writes the prefill payload to sessionStorage and navigates to /contracts/new', () => {
+    const store: Record<string, string> = {}
+    const sessionStorage = {
+      setItem: (key: string, value: string) => {
+        store[key] = value
+      },
+      getItem: (key: string) => store[key] ?? null,
+    }
+    const navigate = jest.fn()
+
+    const contract = {
+      label: 'Mainnet Alerts',
+      webhook_url: 'https://hooks.example.com/secret',
+      rules: [
+        { type: 'LargeTransfer', threshold_xlm: 1000 } as AlertRule,
+        { type: 'FunctionCalled', function_name: 'transfer' } as AlertRule,
+      ],
+    }
+
+    runDuplicateAction(contract, sessionStorage, navigate)
+
+    expect(navigate).toHaveBeenCalledWith('/contracts/new')
+    const raw = sessionStorage.getItem('txwatch_duplicate_contract')
+    expect(raw).not.toBeNull()
+    expect(JSON.parse(raw as string)).toEqual({
+      label: 'Mainnet Alerts (copy)',
+      webhook_url: 'https://hooks.example.com/secret',
+      rules: contract.rules,
+    })
+  })
+})
+
 describe('ContractDetail alert history lookup regression (#26)', () => {
   const contractId = 'CDSO4GGZH7KBUQYKOIQDCMCFSRYEPOVDUX7Z4IB5TWNTLT2GDRKDQOYR'
   const internalUuid = 'uuid-contract-999'

@@ -5,6 +5,14 @@ import type { AlertPayload, AlertRule, Network } from '@/types'
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? ''
 
+/**
+ * Whether the app is running in API mode, i.e. a backend API URL is
+ * configured. Single source of truth for API-mode detection.
+ */
+export function isApiConfigured(): boolean {
+  return Boolean(process.env.NEXT_PUBLIC_API_URL)
+}
+
 /** Default request timeout for apiFetch, in milliseconds. */
 export const API_TIMEOUT_MS = 15000
 

@@ -102,6 +102,23 @@ export default function ContractDetailPage({ params }: { params: { id: string } 
     router.push('/contracts')
   }
 
+  function handleDuplicate() {
+    if (!contract) return
+    try {
+      sessionStorage.setItem(
+        'txwatch_duplicate_contract',
+        JSON.stringify({
+          label: `${contract.label} (copy)`,
+          webhook_url: contract.webhook_url,
+          rules: contract.rules,
+        })
+      )
+    } catch {
+      // sessionStorage may be unavailable; still navigate to the new contract page
+    }
+    router.push('/contracts/new')
+  }
+
   function openEditRules() {
     setEditedRules(contract!.rules)
     setRulesError(null)
@@ -306,6 +323,12 @@ export default function ContractDetailPage({ params }: { params: { id: string } 
             className="px-3 py-1.5 rounded-lg border border-zinc-700 hover:border-zinc-500 text-sm text-zinc-300 hover:text-zinc-100 transition-colors"
           >
             Edit Rules
+          </button>
+          <button
+            onClick={handleDuplicate}
+            className="px-3 py-1.5 rounded-lg border border-zinc-700 hover:border-zinc-500 text-sm text-zinc-300 hover:text-zinc-100 transition-colors"
+          >
+            Duplicate
           </button>
           <button
             onClick={() => setShowDelete(true)}

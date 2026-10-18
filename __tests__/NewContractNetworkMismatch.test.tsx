@@ -16,6 +16,15 @@ vi.mock('@/lib/storage', () => ({
   saveContract: vi.fn().mockReturnValue(true),
 }))
 
+vi.mock('@/lib/stellar', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/stellar')>()
+  return {
+    ...actual,
+    checkContractOnNetwork: vi.fn().mockResolvedValue(true),
+    contractExists: vi.fn().mockResolvedValue(true),
+  }
+})
+
 describe('NewContractPage - Network Mismatch & Acknowledgement (#12, #13)', () => {
   beforeEach(() => {
     delete (window as any).freighter
