@@ -1,6 +1,5 @@
-import { apiFetch, isApiConfigured } from '@/lib/api'
-import { apiFetch, type ApiError } from '@/lib/api'
-import { addAlert, getAlerts } from '@/lib/storage'
+import { apiFetch, isApiConfigured, type ApiError } from '@/lib/api'
+import { addAlert, getAlerts, getAllAlerts } from '@/lib/storage'
 import { isAlertRuleType, type AlertPayload, type Network } from '@/types'
 
 /**
@@ -17,7 +16,7 @@ export interface FetchAlertsOptions {
 export const ALERT_POLL_INTERVAL_MS = 30000
 /** Upper bound for the polling interval while the core keeps failing. */
 export const ALERT_POLL_MAX_INTERVAL_MS = 5 * 60 * 1000
-const ALERT_POLL_INTERVAL_MS = 30000
+
 
 export async function fetchAlerts(
   contractId: string,
@@ -109,6 +108,33 @@ export function filterNewAlerts(
     fresh.push(a)
   }
   return fresh
+}
+
+/**
+ * Parse the cached `txwatch_alerts` array once and return the latest alert
+ * timestamp per contract. Keyed by `${network}:${contract_id}` to avoid
+ * cross-network mixing, and also by `contract_id` for backward compatibility.
+ */
+export function getLatestAlertTimestamps(alerts?: AlertPayload[]): Record<string, number> {
+  const latest: Record<string, number> = {}
+  const list = alerts ?? getAllAlerts()
+  for (const alert of list) {
+    const id = alert.contract_id
+    if (!id) continue
+    const ts = alert.timestamp
+    if (typeof ts !== 'number' || !Number.isFinite(ts)) continue
+
+    if (alert.network) {
+      const netKey = `${alert.network}:${id}`
+      if (latest[netKey] === undefined || ts > latest[netKey]) {
+        latest[netKey] = ts
+      }
+    }
+    if (latest[id] === undefined || ts > latest[id]) {
+      latest[id] = ts
+    }
+  }
+  return latest
 }
 
 /**
