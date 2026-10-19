@@ -1,17 +1,15 @@
 'use client'
 
-import { AlertPayload, AlertRuleType } from '@/types'
-import { explorerTxUrl } from '@/lib/stellar'
-import { Network } from '@/types'
+import { AlertPayload, AlertRuleType, Network } from '@/types'
+import { explorerTxUrl, truncateId } from '@/lib/stellar'
 import EmptyState from './EmptyState'
-import { truncateId } from '@/lib/stellar'
 import CopyButton from '@/components/CopyButton'
 import { formatDateTime, formatRelativeTime } from '@/lib/format'
 import { formatAmount } from '@/lib/formatAmount'
 import { useEffect, useMemo, useState } from 'react'
 import AlertRuleBadge from './AlertRuleBadge'
 import Modal from './Modal'
-import WebhookLogCard from './WebhookLogCard'
+import WebhookLogCard, { type WebhookEntry } from './WebhookLogCard'
 import { buildCSV } from '@/lib/csv'
 import SortToggle from './SortToggle'
 import { useSortedLog } from '@/hooks/useSortedLog'
@@ -50,6 +48,19 @@ function resolveNetwork(alert: AlertPayload, fallback: Network): Network {
   return validNetworks.includes(alert.network as Network)
     ? (alert.network as Network)
     : fallback
+}
+
+function toWebhookEntry(alert: AlertPayload): WebhookEntry {
+  return {
+    id: alert.transaction_hash,
+    timestamp: new Date(alert.timestamp).toISOString(),
+    event: alert.rule_triggered,
+    contractAddress: alert.contract_id,
+    status: 'success',
+    amount: alert.amount?.toString(),
+    txHash: alert.transaction_hash,
+    payload: alert,
+  }
 }
 
 function exportCSV(alerts: AlertPayload[]) {
@@ -240,62 +251,12 @@ export default function WebhookLog({ alerts, network }: WebhookLogProps) {
           <>
             {/* Mobile card layout */}
             <div className="space-y-3 md:hidden">
-              {filteredAlerts.map((alert, i) => (
-                <WebhookLogCard
-                  key={i}
-                  alert={alert}
-                  network={network}
-                  onClick={() => setSelectedAlert(alert)}
-                />
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-zinc-800 text-left">
-                <th className="pb-3 pr-4 text-xs font-medium text-zinc-500 uppercase tracking-wider">Time</th>
-                <th className="pb-3 pr-4 text-xs font-medium text-zinc-500 uppercase tracking-wider">Rule</th>
-                <th className="pb-3 pr-4 text-xs font-medium text-zinc-500 uppercase tracking-wider">Tx Hash</th>
-                <th className="pb-3 pr-4 text-xs font-medium text-zinc-500 uppercase tracking-wider">Function</th>
-                <th className="pb-3 text-xs font-medium text-zinc-500 uppercase tracking-wider">Amount</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-zinc-800/50">
               {pageAlerts.map((alert, i) => (
-                <tr key={`${alert.transaction_hash}-${pageStart + i}`} className="hover:bg-zinc-800/30 transition-colors">
-                  <td className="py-3 pr-4 text-zinc-400 whitespace-nowrap">
-                    {formatDateTime(alert.timestamp)}
-                  </td>
-                  <td className="py-3 pr-4">
-                    <AlertRuleBadge type={alert.rule_triggered} />
-                  </td>
-                  <td className="py-3 pr-4">
-                    <span className="inline-flex items-center gap-2">
-                      <a
-                        href={explorerTxUrl(resolveNetwork(alert, network), alert.transaction_hash)}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="font-mono text-indigo-400 hover:text-indigo-300 transition-colors"
-                      >
-                        {truncateId(alert.transaction_hash)}
-                      </a>
-                      {alert.horizon_link && (
-                        <a
-                          href={alert.horizon_link}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
-                        >
-                          Horizon
-                        </a>
-                      )}
-                      <CopyButton text={alert.transaction_hash} />
-                    </span>
-                  </td>
-                  <td className="py-3 pr-4 font-mono text-zinc-400">
-                    {alert.function_name ?? 'N/A'}
-                  </td>
-                  <td className="py-3 text-zinc-400">
-                    {alert.amount !== undefined ? `${alert.amount} XLM` : 'N/A'}
-                  </td>
-                </tr>
+                <WebhookLogCard
+                  key={`${alert.transaction_hash}-${pageStart + i}`}
+                  entry={toWebhookEntry(alert)}
+                  network={resolveNetwork(alert, network)}
+                />
               ))}
             </div>
             {/* Desktop table layout */}
@@ -408,14 +369,17 @@ export default function WebhookLog({ alerts, network }: WebhookLogProps) {
 
       {/* Alert Detail Drawer */}
       <Modal
-        isOpen={selectedAlert !== null}
+        open={selectedAlert !== null}
         onClose={() => setSelectedAlert(null)}
         title="Alert Details"
       >
         {selectedAlert && (
           <div className="space-y-4">
             <div className="flex flex-wrap gap-2">
-              <CopyButton text={JSON.stringify(selectedAlert, null, 2)} label="Copy JSON" />
+              <CopyButton
+                text={JSON.stringify(selectedAlert, null, 2)}
+                aria-label="Copy JSON"
+              />
               <a
                 href={explorerTxUrl(network, selectedAlert.transaction_hash)}
                 target="_blank"

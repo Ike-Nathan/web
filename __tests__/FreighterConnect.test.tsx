@@ -162,8 +162,6 @@ describe('FreighterConnect', () => {
 
   describe('unavailable extension', () => {
     it('shows error and install link when extension is not installed', async () => {
-      delete (window as any).freighter
-    it('shows error when extension is not installed', async () => {
       mockExtensionMissing()
 
       render(<FreighterConnect />)
@@ -181,10 +179,7 @@ describe('FreighterConnect', () => {
     })
 
     it('allows retrying detection after extension is installed', async () => {
-      delete (window as any).freighter
-    it('opens Freighter website when extension is not installed', async () => {
       mockExtensionMissing()
-      const windowOpenSpy = vi.spyOn(window, 'open').mockImplementation(() => null)
 
       render(<FreighterConnect />)
 
@@ -194,13 +189,8 @@ describe('FreighterConnect', () => {
         expect(screen.getByRole('button', { name: /check again/i })).toBeInTheDocument()
       })
 
-      // Simulate extension installation
-      const mockPublicKey = 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
-      ;(window as any).freighter = {
-        isConnected: vi.fn().mockResolvedValue(true),
-        getPublicKey: vi.fn().mockResolvedValue(mockPublicKey),
-        getNetwork: vi.fn().mockResolvedValue('TESTNET'),
-      }
+      // Simulate the extension being installed and approved after the fact.
+      mockConnectedSession()
 
       fireEvent.click(screen.getByRole('button', { name: /check again/i }))
 
