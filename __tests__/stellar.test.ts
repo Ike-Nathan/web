@@ -1,7 +1,10 @@
 import { vi } from 'vitest'
+import { StrKey } from '@stellar/stellar-sdk'
 import {
   isValidContractId,
   normalizeContractId,
+  nonContractAddressHint,
+  contractExists,
   mapFreighterNetwork,
   validateWebhookUrl,
 } from '@/lib/stellar'
@@ -164,6 +167,68 @@ describe('normalizeContractId', () => {
       contractId: 'CDSO4GGZH7KBUQYKOIQDCMCFSRYEPOVDUX7Z4IB5TWNTLT2GDRKDQOYR',
     })
   })
+
+  describe('other explorers', () => {
+    const ID = StrKey.encodeContract(Buffer.alloc(32, 7))
+
+    it.each([
+      [`https://stellarchain.io/contracts/${ID}`, 'mainnet'],
+      [`https://testnet.stellarchain.io/contracts/${ID}`, 'testnet'],
+      [`https://futurenet.stellarchain.io/contracts/${ID.toLowerCase()}`, 'futurenet'],
+      [
+        `https://lab.stellar.org/smart-contracts/contract-explorer?$=network$id=testnet&label=Testnet;&smartContracts$explorer$contractId=${ID};;`,
+        'testnet',
+      ],
+      [
+        `https://lab.stellar.org/smart-contracts/contract-explorer?$=network$id=mainnet&label=Mainnet;&smartContracts$explorer$contractId=${ID};;`,
+        'mainnet',
+      ],
+      [`https://stellar.expert/explorer/testnet/contract/${ID}?tab=storage`, 'testnet'],
+    ])('extracts the contract and network from %s', (url, network) => {
+      expect(normalizeContractId(url)).toEqual({ contractId: ID, network })
+    })
+
+    it('extracts the contract without guessing a network when the URL has none', () => {
+      expect(normalizeContractId(`https://my-explorer.example/c/${ID}`)).toEqual({
+        contractId: ID,
+      })
+    })
+  })
+
+  it('joins a StrKey that was split across lines', () => {
+    const id = 'CDSO4GGZH7KBUQYKOIQDCMCFSRYEPOVDUX7Z4IB5TWNTLT2GDRKDQOYR'
+    expect(normalizeContractId(`${id.slice(0, 28)}\n${id.slice(28)}`)).toEqual({
+      contractId: id,
+    })
+  })
+
+  it.each([
+    'please watch my token contract',
+    'C-ABC 123!',
+    'https://example.com/not-a-contract',
+  ])('leaves text that is not a URL with a contract or a StrKey untouched: %j', (input) => {
+    expect(normalizeContractId(input)).toEqual({ contractId: input })
+  })
+})
+
+describe('nonContractAddressHint', () => {
+  it('explains that a G… address is an account, not a contract', () => {
+    const account = StrKey.encodeEd25519PublicKey(Buffer.alloc(32, 1))
+    expect(nonContractAddressHint(account)).toMatch(/account address \(G…\), not a contract/)
+    expect(nonContractAddressHint(` ${account.toLowerCase()} `)).toMatch(/account address/)
+  })
+
+  it('explains that an M… address is a muxed account, not a contract', () => {
+    const muxed = StrKey.encodeMed25519PublicKey(Buffer.alloc(40, 1))
+    expect(nonContractAddressHint(muxed)).toMatch(/muxed account address \(M…\)/)
+  })
+
+  it.each(['', 'CDSO4GGZH7KBUQYKOIQDCMCFSRYEPOVDUX7Z4IB5TWNTLT2GDRKDQOYR', 'hello'])(
+    'returns null for %j',
+    (input) => {
+      expect(nonContractAddressHint(input)).toBeNull()
+    }
+  )
 })
 
 describe('validateWebhookUrl', () => {

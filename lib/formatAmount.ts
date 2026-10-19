@@ -132,3 +132,56 @@ export function formatAmountCompact(
     return `${renderFixed({ ...value, scale: value.scale + 3 }, 2)}K ${label}`
   return `${renderFixed(value, 2)} ${label}`
 }
+
+/** XLM supports at most 7 decimal places (stroops). */
+export const MAX_XLM_DECIMALS = 7
+/** Total XLM supply — the upper bound for a transfer threshold. */
+export const MAX_XLM_THRESHOLD = 50_000_000_000
+
+export type ThresholdValidation =
+  | { ok: true; value: number }
+  | { ok: false; error: string }
+
+const PLAIN_DECIMAL = /^(?:\d+(?:\.\d*)?|\.\d+)$/
+
+/**
+ * Validates an XLM threshold as the user typed it. Works on the raw string:
+ * `String(0.00000001)` is "1e-8", so counting decimals on a parsed number
+ * misses precision errors, and 50000000000.0000001 rounds to exactly the
+ * maximum as a float. The bound is therefore checked in integer stroops.
+ */
+export function validateThreshold(raw: string): ThresholdValidation {
+  const text = raw.trim()
+  if (!text) return { ok: false, error: 'Enter a valid XLM threshold' }
+  if (!PLAIN_DECIMAL.test(text)) {
+    return {
+      ok: false,
+      error: /e/i.test(text)
+        ? 'Enter the threshold as a plain decimal number (e.g. 0.0000001)'
+        : 'Enter a valid XLM threshold',
+    }
+  }
+
+  const [intPart, fracPart = ''] = text.split('.')
+  if (fracPart.length > MAX_XLM_DECIMALS) {
+    return {
+      ok: false,
+      error: `Threshold supports at most ${MAX_XLM_DECIMALS} decimal places`,
+    }
+  }
+
+  const scale = 10n ** BigInt(MAX_XLM_DECIMALS)
+  const stroops =
+    BigInt(intPart || '0') * scale +
+    BigInt(fracPart.padEnd(MAX_XLM_DECIMALS, '0') || '0')
+  if (stroops <= 0n) {
+    return { ok: false, error: 'Threshold must be greater than 0' }
+  }
+  if (stroops > BigInt(MAX_XLM_THRESHOLD) * scale) {
+    return {
+      ok: false,
+      error: `Threshold cannot exceed ${MAX_XLM_THRESHOLD.toLocaleString('en-US')} XLM`,
+    }
+  }
+  return { ok: true, value: Number(text) }
+}

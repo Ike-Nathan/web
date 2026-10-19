@@ -132,8 +132,34 @@ HORIZON_URLS.testnet // https://horizon-testnet.stellar.org
 HORIZON_URLS.futurenet // https://horizon-futurenet.stellar.org
 
 // Soroban JSON-RPC - contract simulation, ledger entries
+SOROBAN_RPC_URLS.mainnet // https://soroban-rpc.mainnet.stellar.gateway.fm
 SOROBAN_RPC_URLS.testnet // https://soroban-testnet.stellar.org
+SOROBAN_RPC_URLS.futurenet // https://rpc-futurenet.stellar.org
 ```
+
+Use `horizonUrl(network)` and `sorobanRpcUrl(network)` rather than the constants: they apply the overrides below.
+
+#### Choosing a Soroban RPC provider
+
+SDF runs public RPC for testnet and futurenet only. For mainnet the dashboard defaults to [Gateway.fm](https://gateway.fm)'s keyless public endpoint, so contract lookups work out of the box. Public endpoints are rate-limited and best-effort, so for production set your own:
+
+| Provider | Mainnet endpoint | Key needed |
+| --- | --- | --- |
+| Gateway.fm (default) | `https://soroban-rpc.mainnet.stellar.gateway.fm` | No |
+| Lightsail | `https://rpc.lightsail.network` | No |
+| Ankr | `https://rpc.ankr.com/stellar_soroban` | No (public tier); yes for higher limits |
+| Validation Cloud | `https://mainnet.stellar.validationcloud.io/v1/<API_KEY>/soroban/rpc` | Yes |
+| QuickNode, Blockdaemon, … | provider-specific | Yes |
+
+Configure endpoints in `.env.local`. Per-network variables win over the global one, and the Content-Security-Policy `connect-src` allow-list picks up whatever you set:
+
+```bash
+NEXT_PUBLIC_SOROBAN_RPC_URL_MAINNET=https://mainnet.stellar.validationcloud.io/v1/<API_KEY>/soroban/rpc
+NEXT_PUBLIC_SOROBAN_RPC_URL_TESTNET=   # default: https://soroban-testnet.stellar.org
+NEXT_PUBLIC_SOROBAN_RPC_URL=           # fallback for every network
+```
+
+The endpoint must allow cross-origin requests (CORS), because contract verification runs in the browser. Keys in `NEXT_PUBLIC_*` variables are visible to users, so use a key restricted to your domain or proxy the RPC.
 
 ### Querying Horizon
 

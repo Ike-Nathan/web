@@ -2,6 +2,9 @@
 
 import React, { useCallback, useState } from 'react';
 import { formatAmount } from '@/lib/formatAmount';
+import { truncateId } from '@/lib/stellar';
+import { formatDateTime } from '@/lib/format';
+import { explorerContractUrl, explorerTxUrl } from '@/lib/explorer';
 import { truncateId, explorerTxUrl } from '@/lib/stellar';
 import { formatDateTime } from '@/lib/format';
 import Modal from '@/components/Modal';
@@ -95,6 +98,10 @@ export function WebhookLogCard({ alert, entry, network = 'mainnet', onClick }: W
     }
   }, [json]);
 
+  const txHref = entry.txHash ? explorerTxUrl(network, entry.txHash) : null;
+  const explorerHref =
+    txHref ??
+    (entry.contractAddress ? explorerContractUrl(network, entry.contractAddress) : null);
   const explorerHref = data.txHash
     ? explorerTxUrl(network, data.txHash)
     : data.contractAddress
@@ -148,6 +155,20 @@ export function WebhookLogCard({ alert, entry, network = 'mainnet', onClick }: W
         {data.txHash && (
           <div className="text-xs">
             <span className="text-muted-foreground">Tx: </span>
+            {txHref ? (
+              <a
+                href={txHref}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => e.stopPropagation()}
+                className="font-mono text-primary hover:underline break-all"
+                aria-label={`View transaction ${entry.txHash} on Stellar Explorer`}
+              >
+                {truncateId(entry.txHash)}
+              </a>
+            ) : (
+              <span className="font-mono break-all">{truncateId(entry.txHash)}</span>
+            )}
             <a
               href={explorerTxUrl(network, data.txHash)}
               target="_blank"
@@ -162,6 +183,62 @@ export function WebhookLogCard({ alert, entry, network = 'mainnet', onClick }: W
         )}
       </article>
 
+      {isOpen && (
+        <div
+          className="fixed inset-0 z-50 flex justify-end"
+          role="dialog"
+          aria-modal="true"
+          aria-label={`Alert detail for ${entry.event}`}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') close();
+          }}
+        >
+          <div
+            className="absolute inset-0 bg-black/50"
+            onClick={close}
+            aria-hidden="true"
+          />
+          <div className="relative z-10 flex h-full w-full max-w-lg flex-col border-l border-border bg-card shadow-xl">
+            <div className="flex items-center justify-between border-b border-border p-4">
+              <h2 className="text-sm font-semibold text-foreground">
+                Alert Detail
+              </h2>
+              <button
+                type="button"
+                onClick={close}
+                autoFocus
+                className="rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                aria-label="Close detail drawer"
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-auto p-4">
+              <pre className="whitespace-pre-wrap break-all rounded-md bg-muted p-3 text-xs font-mono text-foreground">
+                {json}
+              </pre>
+            </div>
+
+            <div className="flex items-center gap-2 border-t border-border p-4">
+              <button
+                type="button"
+                onClick={handleCopy}
+                className="rounded-md border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+              >
+                {copied ? 'Copied!' : 'Copy JSON'}
+              </button>
+              {explorerHref && (
+                <a
+                  href={explorerHref}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="rounded-md border border-border px-3 py-1.5 text-xs font-medium text-primary hover:bg-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                >
+                  Open in explorer
+                </a>
+              )}
+            </div>
       <Modal
         open={isOpen}
         onClose={close}
