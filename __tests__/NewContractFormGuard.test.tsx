@@ -4,6 +4,9 @@ import { axe } from 'vitest-axe'
 import NewContractPage from '@/app/contracts/new/page'
 import { syncSaveContract } from '@/lib/contractSync'
 import { addContract, saveContract } from '@/lib/storage'
+import { render, screen, fireEvent } from '@testing-library/react'
+import NewContractPage from '@/app/contracts/new/page'
+import { addContract } from '@/lib/storage'
 
 const pushMock = vi.fn()
 const backMock = vi.fn()
@@ -78,6 +81,7 @@ describe('NewContractPage - Timer Cleanup & Form Guard (#18, #19, #20)', () => {
 
   it('saves a valid contract once and redirects without DuplicateContractError (#194)', async () => {
     vi.useFakeTimers()
+  it('submits via the form when Enter is pressed in a field (#199)', async () => {
     render(<NewContractPage />)
 
     const labelInput = screen.getByPlaceholderText(/e\.g\. My DEX Contract/i)
@@ -107,5 +111,30 @@ describe('NewContractPage - Timer Cleanup & Form Guard (#18, #19, #20)', () => {
 
     const results = await axe(container)
     expect(results).toHaveNoViolations()
+    const form = labelInput.closest('form')
+    expect(form).not.toBeNull()
+    fireEvent.submit(form as HTMLFormElement)
+
+    await waitFor(() => {
+      expect(addContract).toHaveBeenCalled()
+    })
+  })
+
+  it('exposes a type=submit Save Contract button and type=button secondary actions (#199)', () => {
+    render(<NewContractPage />)
+
+    expect(screen.getByRole('button', { name: /Save Contract/i })).toHaveAttribute('type', 'submit')
+    expect(screen.getByRole('button', { name: /Cancel/i })).toHaveAttribute('type', 'button')
+  })
+
+  it('does not render a duplicate override checkbox outside ContractVerification (#198)', () => {
+    render(<NewContractPage />)
+
+    // Only ContractVerification may render an override control; the page-level
+    // duplicate checkbox has been removed.
+    const overrideCheckboxes = screen
+      .queryAllByRole('checkbox')
+      .filter((el) => /save anyway|override/i.test(el.getAttribute('aria-label') ?? ''))
+    expect(overrideCheckboxes.length).toBeLessThanOrEqual(1)
   })
 })

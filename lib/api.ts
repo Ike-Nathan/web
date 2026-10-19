@@ -1,9 +1,17 @@
 import { horizonUrl } from '@/lib/stellar'
 import { SIGNATURE_HEADER, signWebhookPayload } from './webhookSignature'
-import { HORIZON_URLS } from '@/lib/stellar'
+import { getAuthorizationHeader, notifyAuthRequired } from './apiAuth'
 import type { AlertPayload, AlertRule, Network } from '@/types'
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? ''
+
+/**
+ * Whether the app is running in API mode, i.e. a backend API URL is
+ * configured. Single source of truth for API-mode detection.
+ */
+export function isApiConfigured(): boolean {
+  return Boolean(process.env.NEXT_PUBLIC_API_URL)
+}
 
 /** Default request timeout for apiFetch, in milliseconds. */
 export const API_TIMEOUT_MS = 15000
@@ -15,6 +23,32 @@ export function joinUrl(base: string, path: string): string {
   return `${base.replace(/\/+$/, '')}/${path.replace(/^\/+/, '')}`
 }
 
+/** Non-2xx response from apiFetch, carrying the status and any Retry-After hint. */
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    /** Parsed Retry-After header in milliseconds, when present. */
+    readonly retryAfterMs?: number
+  ) {
+    super(message)
+    this.name = 'ApiError'
+  }
+}
+
+/** Parse a Retry-After header (delta-seconds or HTTP-date) into milliseconds. */
+export function parseRetryAfter(
+  value: string | null,
+  now = Date.now()
+): number | undefined {
+  if (!value) return undefined
+  const seconds = Number(value)
+  if (value.trim() !== '' && Number.isFinite(seconds))
+    return Math.max(0, seconds * 1000)
+  const date = Date.parse(value)
+  return Number.isNaN(date) ? undefined : Math.max(0, date - now)
+}
+
 export async function apiFetch<T>(
   path: string,
   options?: RequestInit & { timeoutMs?: number }
@@ -23,6 +57,11 @@ export async function apiFetch<T>(
   const headers = new Headers(init.headers)
   if (init.body != null && !headers.has('content-type')) {
     headers.set('Content-Type', 'application/json')
+  }
+  // Credentials go only to the core (relative paths), never to absolute URLs.
+  if (!/^https?:\/\//i.test(path) && !headers.has('authorization')) {
+    const authorization = await getAuthorizationHeader()
+    if (authorization) headers.set('Authorization', authorization)
   }
 
   // Combine the caller's signal (if any) with a timeout signal.
@@ -52,7 +91,12 @@ export async function apiFetch<T>(
           message = text
         }
       }
-      throw new Error(message)
+      if (res.status === 401) notifyAuthRequired()
+      throw new ApiError(
+        message,
+        res.status,
+        parseRetryAfter(res.headers?.get('retry-after') ?? null)
+      )
     }
 
     if (res.status === 204) return undefined as T
@@ -60,7 +104,10 @@ export async function apiFetch<T>(
     if (!text) return undefined as T
     return JSON.parse(text) as T
   } catch (error) {
-    if ((error as { name?: string })?.name === 'AbortError' && !init.signal?.aborted) {
+    if (
+      (error as { name?: string })?.name === 'AbortError' &&
+      !init.signal?.aborted
+    ) {
       throw new Error('Request timed out')
     }
     throw error
@@ -69,8 +116,6 @@ export async function apiFetch<T>(
     init.signal?.removeEventListener('abort', onCallerAbort)
   }
 }
-
-import type { AlertRule, AlertRuleType, Network } from '@/types'
 
 /** Result of a test webhook delivery: the HTTP status and whether it succeeded. */
 export interface TestWebhookResult {
@@ -228,8 +273,8 @@ interface SendTestWebhookTransport {
 }
 
 export type SendTestWebhookOptions = SendTestWebhookTransport &
+  /** Send a pre-built payload verbatim, e.g. the one shown in a preview. */
   (
-    /** Send a pre-built payload verbatim, e.g. the one shown in a preview. */
     | { payload: AlertPayload }
     | ({ payload?: undefined } & BuildTestWebhookPayloadOptions)
   )
@@ -244,8 +289,10 @@ export async function sendTestWebhook(
       ? options.payload
       : buildTestWebhookPayload(options)
 
-  const externalSignal = typeof signalOrTimeoutMs === 'number' ? undefined : signalOrTimeoutMs
-  const timeoutMs = typeof signalOrTimeoutMs === 'number' ? signalOrTimeoutMs : 10000
+  const externalSignal =
+    typeof signalOrTimeoutMs === 'number' ? undefined : signalOrTimeoutMs
+  const timeoutMs =
+    typeof signalOrTimeoutMs === 'number' ? signalOrTimeoutMs : 10000
 
   const internalController = new AbortController()
   let timedOut = false
@@ -260,7 +307,9 @@ export async function sendTestWebhook(
   const onCallerAbort = () => {
     clearTimeout(timeoutId)
     if (!combinedController.signal.aborted) {
-      combinedController.abort(externalSignal?.reason || new Error('cancelled by caller'))
+      combinedController.abort(
+        externalSignal?.reason || new Error('cancelled by caller')
+      )
     }
   }
 
@@ -272,18 +321,25 @@ export async function sendTestWebhook(
 
   if (externalSignal?.aborted) {
     clearTimeout(timeoutId)
-    combinedController.abort(externalSignal.reason || new Error('cancelled by caller'))
+    combinedController.abort(
+      externalSignal.reason || new Error('cancelled by caller')
+    )
   } else {
     externalSignal?.addEventListener('abort', onCallerAbort, { once: true })
-    internalController.signal.addEventListener('abort', onTimeoutAbort, { once: true })
+    internalController.signal.addEventListener('abort', onTimeoutAbort, {
+      once: true,
+    })
   }
 
   const signal = combinedController.signal
 
   try {
     const body = JSON.stringify(payload)
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-    if (secret) headers[SIGNATURE_HEADER] = await signWebhookPayload(secret, body)
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    }
+    if (secret)
+      headers[SIGNATURE_HEADER] = await signWebhookPayload(secret, body)
 
     // In browser production, route through server proxy to avoid CORS failures (#23)
     const isBrowser = typeof window !== 'undefined'

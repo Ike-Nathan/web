@@ -1,7 +1,49 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
+import { WatchWalletChanges } from '@stellar/freighter-api'
 import { broadcastWalletChange, subscribeWallet } from '@/lib/walletEvents'
+
+/**
+ * Single app-level watcher shared by every wallet-aware component.
+ *
+ * `WatchWalletChanges` is instantiated once and reference counted, so the
+ * underlying extension polling runs at most once per app and is torn down when
+ * the last consumer unmounts.
+ */
+let watcher: WatchWalletChanges | null = null
+let watcherRefCount = 0
+
+function acquireWalletWatcher(): () => void {
+  if (!watcher) {
+    const instance = new WatchWalletChanges(5000)
+    instance.watch((result) => {
+      broadcastWalletChange(result?.address ?? null)
+    })
+    watcher = instance
+  }
+  watcherRefCount += 1
+
+  let released = false
+  return () => {
+    if (released) return
+    released = true
+    watcherRefCount -= 1
+    if (watcherRefCount <= 0 && watcher) {
+      watcher.stop()
+      watcher = null
+      watcherRefCount = 0
+    }
+  }
+}
+
+/**
+ * Mount the shared wallet watcher for the lifetime of the calling component.
+ * Safe to call from any number of components; only one watcher ever runs.
+ */
+export function useWalletWatcher(): void {
+  useEffect(() => acquireWalletWatcher(), [])
+}
 
 export interface WalletState {
   /** Connected public key, or null while disconnected. */
@@ -27,6 +69,9 @@ export function useWalletState(): WalletState {
     setPublicKey(next)
     broadcastWalletChange(next)
   }, [])
+
+  // One shared watcher for the whole app; no per-instance polling.
+  useWalletWatcher()
 
   useEffect(() => {
     let cancelled = false

@@ -1,32 +1,22 @@
 /**
- * Tests for lib/format date helpers.
- *
- * We pin the timezone to UTC so assertions are environment-independent.
- * Vitest exposes process.env.TZ; set it before importing the module so the
- * cached Intl.DateTimeFormat instances are created in UTC.
+ * Tests for lib/format date and masking helpers.
  */
-
-// Fix the timezone before the module is evaluated and caches formatters.
 process.env.TZ = 'UTC'
 
 import { describe, expect, it, vi } from 'vitest'
-import { formatDate, formatDateTime, formatTime, formatRelativeTime } from '../lib/format'
+import { formatDate, formatDateTime, formatTime, formatRelativeTime, maskWebhookUrl } from '../lib/format'
 
-// 2026-05-29T15:04:00Z  →  Unix ms
 const TS = new Date('2026-05-29T15:04:00Z').getTime()
 
 describe('formatDate', () => {
   it('returns a human-readable date without a time component', () => {
     const result = formatDate(TS)
-    // Should contain the year and day; exact locale string varies
     expect(result).toMatch(/2026/)
     expect(result).toMatch(/29/)
-    // Must NOT contain hours/minutes
     expect(result).not.toMatch(/15:04/)
   })
 
   it('does not include a timezone abbreviation', () => {
-    // formatDate shows date only — no TZ suffix expected
     const result = formatDate(TS)
     expect(result).not.toMatch(/UTC|GMT/)
   })
@@ -37,12 +27,10 @@ describe('formatDateTime', () => {
     const result = formatDateTime(TS)
     expect(result).toMatch(/2026/)
     expect(result).toMatch(/29/)
-    // hour/minute present (locale-specific separators)
     expect(result).toMatch(/\d{1,2}[:.]\d{2}/)
   })
 
   it('includes a short timezone name', () => {
-    // In UTC the abbreviation is "UTC"
     const result = formatDateTime(TS)
     expect(result).toMatch(/UTC|GMT/)
   })
@@ -76,7 +64,6 @@ describe('formatRelativeTime', () => {
 
   it('reuses a single cached RelativeTimeFormat instance across calls', () => {
     const now = TS
-    // Warm the cache so the spy only observes reuse, not first construction.
     formatRelativeTime(now - 60_000, now)
 
     const spy = vi.spyOn(Intl, 'RelativeTimeFormat')
@@ -88,5 +75,27 @@ describe('formatRelativeTime', () => {
     } finally {
       spy.mockRestore()
     }
+  })
+})
+
+describe('maskWebhookUrl', () => {
+  it('masks Slack webhook URLs, leaving only the service path', () => {
+    expect(maskWebhookUrl('https://hooks.slack.com/services/T00/B00/XXXX')).toBe('https://hooks.slack.com/services/…/****')
+  })
+
+  it('masks Discord webhook URLs, leaving only the api path', () => {
+    expect(maskWebhookUrl('https://discord.com/api/webhooks/123/abc')).toBe('https://discord.com/api/…/****')
+  })
+
+  it('masks URLs with query string tokens', () => {
+    expect(maskWebhookUrl('https://example.com/hooks/my-hook?token=secret')).toBe('https://example.com/hooks/…/****')
+  })
+
+  it('returns empty string for empty input', () => {
+    expect(maskWebhookUrl('')).toBe('')
+  })
+
+  it('masks unparseable strings gracefully', () => {
+    expect(maskWebhookUrl('not-a-url-secret-string')).toBe('not-a-ur…****')
   })
 })

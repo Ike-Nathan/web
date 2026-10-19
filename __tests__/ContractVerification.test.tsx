@@ -1,6 +1,6 @@
 import { vi } from 'vitest'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import ContractVerification from '@/components/ContractVerification'
+import ContractVerification, { type VerificationStatus } from '@/components/ContractVerification'
 
 global.fetch = vi.fn()
 
@@ -51,8 +51,43 @@ describe('ContractVerification', () => {
 
   it('warns with an override when the contract is not on the network', async () => {
     mockRpc({ jsonrpc: '2.0', id: 1, result: { entries: [] } })
+    const onStatusChange = vi.fn()
+    const onOverrideChange = vi.fn()
 
-    render(<ContractVerification network="mainnet" contractId={CONTRACT_ID} />)
+    render(
+      <ContractVerification
+        network="mainnet"
+        contractId={CONTRACT_ID}
+        overridden={false}
+        onOverrideChange={onOverrideChange}
+        onStatusChange={onStatusChange}
+      />
+    )
+    await vi.advanceTimersByTimeAsync(600)
+
+    await waitFor(() =>
+      expect(screen.getByText(/Contract not found on mainnet/)).toBeInTheDocument()
+    )
+    expect(onStatusChange).toHaveBeenLastCalledWith('not_found')
+
+    const override = screen.getByRole('checkbox')
+    expect(override).not.toBeChecked()
+    fireEvent.click(override)
+    expect(onOverrideChange).toHaveBeenCalledWith(true)
+  })
+
+  it('reflects the lifted override state on the checkbox', async () => {
+    mockRpc({ jsonrpc: '2.0', id: 1, result: { entries: [] } })
+    const onOverrideChange = vi.fn()
+
+    render(
+      <ContractVerification
+        network="mainnet"
+        contractId={CONTRACT_ID}
+        overridden
+        onOverrideChange={onOverrideChange}
+      />
+    )
     await vi.advanceTimersByTimeAsync(600)
 
     await waitFor(() =>
@@ -60,15 +95,38 @@ describe('ContractVerification', () => {
     )
 
     const override = screen.getByRole('checkbox')
-    expect(override).not.toBeChecked()
-    fireEvent.click(override)
     expect(override).toBeChecked()
+    fireEvent.click(override)
+    expect(onOverrideChange).toHaveBeenCalledWith(false)
+  })
+
+  it('reports the found status through onStatusChange', async () => {
+    mockRpc({ jsonrpc: '2.0', id: 1, result: { entries: [{}] } })
+    const onStatusChange = vi.fn<(status: VerificationStatus) => void>()
+
+    render(
+      <ContractVerification
+        network="testnet"
+        contractId={CONTRACT_ID}
+        onStatusChange={onStatusChange}
+      />
+    )
+    await vi.advanceTimersByTimeAsync(600)
+
+    await waitFor(() => expect(onStatusChange).toHaveBeenLastCalledWith('found'))
   })
 
   it('does not block the form when the RPC is unreachable', async () => {
     mockRpc({ jsonrpc: '2.0', id: 1, error: { message: 'server error' } })
+    const onStatusChange = vi.fn()
 
-    render(<ContractVerification network="testnet" contractId={CONTRACT_ID} />)
+    render(
+      <ContractVerification
+        network="testnet"
+        contractId={CONTRACT_ID}
+        onStatusChange={onStatusChange}
+      />
+    )
     await vi.advanceTimersByTimeAsync(600)
 
     await waitFor(() =>
@@ -76,6 +134,7 @@ describe('ContractVerification', () => {
     )
     expect(screen.getByText(/Saving is not blocked/)).toBeInTheDocument()
     expect(screen.queryByRole('checkbox')).not.toBeInTheDocument()
+    expect(onStatusChange).toHaveBeenLastCalledWith('error')
   })
 
   it('re-checks when the network changes', async () => {

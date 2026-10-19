@@ -16,6 +16,15 @@ vi.mock('@/lib/storage', () => ({
   saveContract: vi.fn().mockReturnValue(true),
 }))
 
+vi.mock('@/lib/stellar', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/stellar')>()
+  return {
+    ...actual,
+    checkContractOnNetwork: vi.fn().mockResolvedValue(true),
+    contractExists: vi.fn().mockResolvedValue(true),
+  }
+})
+
 describe('NewContractPage - Network Mismatch & Acknowledgement (#12, #13)', () => {
   beforeEach(() => {
     delete (window as any).freighter
@@ -93,6 +102,27 @@ describe('NewContractPage - Network Mismatch & Acknowledgement (#12, #13)', () =
       expect(
         screen.queryByText(/Your wallet is on PUBLIC, but this contract is on TESTNET/i)
       ).not.toBeInTheDocument()
+      expect(
+        screen.queryByLabelText(/I understand this contract is on a different network/i)
+      ).not.toBeInTheDocument()
     })
+  })
+
+  it('requires acknowledgement before saving when networks mismatch', async () => {
+    ;(window as any).freighter = {
+      isConnected: vi.fn().mockResolvedValue(true),
+      getPublicKey: vi.fn().mockResolvedValue('GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'),
+      getNetwork: vi.fn().mockResolvedValue('PUBLIC'),
+    }
+
+    render(<NewContractPage />)
+
+    const ack = await screen.findByLabelText(
+      /I understand this contract is on a different network/i
+    )
+    expect(ack).not.toBeChecked()
+
+    fireEvent.click(ack)
+    expect(ack).toBeChecked()
   })
 })
