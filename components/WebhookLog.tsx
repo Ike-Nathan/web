@@ -1,12 +1,13 @@
 'use client'
 
-import { AlertPayload, AlertRuleType, Network } from '@/types'
+import { AlertPayload, AlertRuleType, Network, isAlertRuleType } from '@/types'
 import { explorerTxUrl, truncateId } from '@/lib/stellar'
 import EmptyState from './EmptyState'
 import CopyButton from '@/components/CopyButton'
 import { formatDateTime, formatRelativeTime } from '@/lib/format'
 import { formatAmount } from '@/lib/formatAmount'
 import { useEffect, useMemo, useState } from 'react'
+import { useSearchParams } from 'next/navigation'
 import AlertRuleBadge from './AlertRuleBadge'
 import Modal from './Modal'
 import WebhookLogCard, { type WebhookEntry } from './WebhookLogCard'
@@ -50,7 +51,7 @@ function resolveNetwork(alert: AlertPayload, fallback: Network): Network {
     : fallback
 }
 
-function toWebhookEntry(alert: AlertPayload): WebhookEntry {
+export function toWebhookEntry(alert: AlertPayload): WebhookEntry {
   return {
     id: alert.transaction_hash,
     timestamp: new Date(alert.timestamp).toISOString(),
@@ -85,17 +86,44 @@ function exportCSV(alerts: AlertPayload[]) {
 }
 
 export default function WebhookLog({ alerts, network }: WebhookLogProps) {
-  const [selectedFilter, setSelectedFilter] = useState<AlertRuleType | null>(null)
+  const searchParams = useSearchParams()
+
+  const [selectedFilter, setSelectedFilter] = useState<AlertRuleType | null>(() => {
+    const r = searchParams?.get('rule')
+    return r && isAlertRuleType(r) ? r : null
+  })
   const [selectedAlert, setSelectedAlert] = useState<AlertPayload | null>(null)
 
   // Refresh relative time labels every minute from the shared clock
   useNow(60_000)
-  const [search, setSearch] = useState('')
-  const [range, setRange] = useState<DateRange>('all')
-  const [customFrom, setCustomFrom] = useState('')
-  const [customTo, setCustomTo] = useState('')
+
+  const [searchInput, setSearchInput] = useState(() => searchParams?.get('q') ?? '')
+  const [debouncedSearch, setDebouncedSearch] = useState(() => searchParams?.get('q') ?? '')
+
+  const [range, setRange] = useState<DateRange>(() => {
+    const r = searchParams?.get('range')
+    return (r === 'all' || r === '24h' || r === '7d' || r === '30d' || r === 'custom') ? r : 'all'
+  })
+  const [customFrom, setCustomFrom] = useState(() => searchParams?.get('from') ?? '')
+  const [customTo, setCustomTo] = useState(() => searchParams?.get('to') ?? '')
   const [pageSize, setPageSize] = useState<number>(PAGE_SIZES[0])
-  const [page, setPage] = useState(0)
+
+  const [page, setPage] = useState<number>(() => {
+    const p = Number.parseInt(searchParams?.get('page') ?? '', 10)
+    return Number.isFinite(p) && p >= 1 ? p - 1 : 0
+  })
+
+  // Debounce search input by 200ms
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(searchInput)
+    }, 200)
+    return () => clearTimeout(timer)
+  }, [searchInput])
+
+  const isInvertedRange = Boolean(
+    range === 'custom' && customFrom && customTo && customFrom > customTo
+  )
 
   const ruleCounts = useMemo(() => {
     const counts = new Map<AlertRuleType, number>()
@@ -109,7 +137,8 @@ export default function WebhookLog({ alerts, network }: WebhookLogProps) {
   const presentRuleTypes = ruleTypes.filter((type) => ruleCounts.has(type))
 
   const filteredAlerts = useMemo(() => {
-    const query = search.trim().toLowerCase()
+    if (isInvertedRange) return []
+    const query = debouncedSearch.trim().toLowerCase()
     let from = -Infinity
     let to = Infinity
     if (range === 'custom') {
@@ -131,18 +160,37 @@ export default function WebhookLog({ alerts, network }: WebhookLogProps) {
       }
       return true
     })
-  }, [alerts, selectedFilter, search, range, customFrom, customTo])
+  }, [alerts, selectedFilter, debouncedSearch, range, customFrom, customTo, isInvertedRange])
 
-  const { sortedEntries, sortDirection, toggleSort } = useSortedLog(filteredAlerts, 'desc')
+  const initialSort = (searchParams?.get('sort') === 'asc' ? 'asc' : 'desc') as 'asc' | 'desc'
+  const { sortedEntries, sortDirection, toggleSort } = useSortedLog(filteredAlerts, initialSort)
 
   const pageCount = Math.max(1, Math.ceil(sortedEntries.length / pageSize))
   const currentPage = Math.min(page, pageCount - 1)
-  const pageStart = currentPage * pageSize
+  const pageStart = Math.max(0, currentPage * pageSize)
   const pageAlerts = sortedEntries.slice(pageStart, pageStart + pageSize)
 
   useEffect(() => {
     setPage(0)
-  }, [selectedFilter, search, range, customFrom, customTo, pageSize, sortDirection])
+  }, [selectedFilter, debouncedSearch, range, customFrom, customTo, pageSize, sortDirection])
+
+  // Mirror filters into URL search params
+  useEffect(() => {
+    const params = new URLSearchParams()
+    if (selectedFilter) params.set('rule', selectedFilter)
+    if (debouncedSearch.trim()) params.set('q', debouncedSearch.trim())
+    if (range !== 'all') params.set('range', range)
+    if (range === 'custom' && customFrom) params.set('from', customFrom)
+    if (range === 'custom' && customTo) params.set('to', customTo)
+    if (sortDirection !== 'desc') params.set('sort', sortDirection)
+    if (currentPage > 0) params.set('page', String(currentPage + 1))
+
+    const qs = params.toString()
+    if (typeof window !== 'undefined') {
+      const newUrl = qs ? `${window.location.pathname}?${qs}` : window.location.pathname
+      window.history.replaceState(null, '', newUrl)
+    }
+  }, [selectedFilter, debouncedSearch, range, customFrom, customTo, sortDirection, currentPage])
 
   if (alerts.length === 0) {
     return (
@@ -186,8 +234,8 @@ export default function WebhookLog({ alerts, network }: WebhookLogProps) {
       <div className="flex flex-wrap items-center gap-2">
         <input
           type="search"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
+          value={searchInput}
+          onChange={(e) => setSearchInput(e.target.value)}
           placeholder="Search tx hash or function"
           aria-label="Search alerts by transaction hash or function"
           className="flex-1 min-w-[12rem] rounded-lg border border-zinc-700 bg-transparent px-3 py-1.5 text-xs text-zinc-200 placeholder:text-zinc-500 focus:outline-none focus:border-indigo-500"
@@ -209,22 +257,31 @@ export default function WebhookLog({ alerts, network }: WebhookLogProps) {
           ))}
         </div>
         {range === 'custom' && (
-          <div className="flex items-center gap-1 text-xs text-zinc-400">
-            <input
-              type="date"
-              value={customFrom}
-              onChange={(e) => setCustomFrom(e.target.value)}
-              aria-label="From date"
-              className="rounded-lg border border-zinc-700 bg-transparent px-2 py-1 text-zinc-200"
-            />
-            <span>to</span>
-            <input
-              type="date"
-              value={customTo}
-              onChange={(e) => setCustomTo(e.target.value)}
-              aria-label="To date"
-              className="rounded-lg border border-zinc-700 bg-transparent px-2 py-1 text-zinc-200"
-            />
+          <div className="flex flex-col gap-1">
+            <div className="flex items-center gap-1 text-xs text-zinc-400">
+              <input
+                type="date"
+                value={customFrom}
+                onChange={(e) => setCustomFrom(e.target.value)}
+                aria-label="From date"
+                max={customTo || undefined}
+                className="rounded-lg border border-zinc-700 bg-transparent px-2 py-1 text-zinc-200"
+              />
+              <span>to</span>
+              <input
+                type="date"
+                value={customTo}
+                onChange={(e) => setCustomTo(e.target.value)}
+                aria-label="To date"
+                min={customFrom || undefined}
+                className="rounded-lg border border-zinc-700 bg-transparent px-2 py-1 text-zinc-200"
+              />
+            </div>
+            {isInvertedRange && (
+              <p role="alert" className="text-xs text-red-400">
+                &quot;To&quot; date must be on or after &quot;From&quot; date
+              </p>
+            )}
           </div>
         )}
       </div>
@@ -254,8 +311,9 @@ export default function WebhookLog({ alerts, network }: WebhookLogProps) {
               {pageAlerts.map((alert, i) => (
                 <WebhookLogCard
                   key={`${alert.transaction_hash}-${pageStart + i}`}
-                  entry={toWebhookEntry(alert)}
+                  alert={alert}
                   network={resolveNetwork(alert, network)}
+                  onClick={() => setSelectedAlert(alert)}
                 />
               ))}
             </div>
@@ -267,7 +325,8 @@ export default function WebhookLog({ alerts, network }: WebhookLogProps) {
                   <th className="pb-3 pr-4 text-xs font-medium text-zinc-500 uppercase tracking-wider">Rule</th>
                   <th className="pb-3 pr-4 text-xs font-medium text-zinc-500 uppercase tracking-wider">Tx Hash</th>
                   <th className="pb-3 pr-4 text-xs font-medium text-zinc-500 uppercase tracking-wider">Function</th>
-                  <th className="pb-3 text-xs font-medium text-zinc-500 uppercase tracking-wider">Amount</th>
+                  <th className="pb-3 pr-4 text-xs font-medium text-zinc-500 uppercase tracking-wider">Amount</th>
+                  <th className="pb-3 text-right text-xs font-medium text-zinc-500 uppercase tracking-wider">Details</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-800/50">
@@ -275,16 +334,7 @@ export default function WebhookLog({ alerts, network }: WebhookLogProps) {
                   <tr
                     key={i}
                     onClick={() => setSelectedAlert(alert)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault()
-                        setSelectedAlert(alert)
-                      }
-                    }}
-                    tabIndex={0}
-                    role="button"
-                    aria-label="View alert details"
-                    className="hover:bg-zinc-800/30 transition-colors cursor-pointer focus:outline-none focus:bg-zinc-800/50"
+                    className="hover:bg-zinc-800/30 transition-colors cursor-pointer"
                   >
                     <td className="py-3 pr-4 text-zinc-400 whitespace-nowrap">
                       <time
@@ -314,8 +364,21 @@ export default function WebhookLog({ alerts, network }: WebhookLogProps) {
                     <td className="py-3 pr-4 font-mono text-zinc-400">
                       {alert.function_name ?? 'N/A'}
                     </td>
-                    <td className="py-3 text-zinc-400">
+                    <td className="py-3 pr-4 text-zinc-400">
                       {alert.amount !== undefined ? `${formatAmount(alert.amount)} XLM` : 'N/A'}
+                    </td>
+                    <td className="py-3 text-right">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          setSelectedAlert(alert)
+                        }}
+                        aria-label={`View alert for tx ${truncateId(alert.transaction_hash)}`}
+                        className="rounded px-2.5 py-1 text-xs font-medium text-indigo-400 hover:text-indigo-300 hover:bg-zinc-800/60 transition-colors focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                      >
+                        Details
+                      </button>
                     </td>
                   </tr>
                 ))}
