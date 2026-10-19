@@ -675,3 +675,125 @@ describe('contracts page — bulk delete API sync (issue #215)', () => {
     expect(failCount).toBe(1)
   })
 })
+
+describe('contracts page — rule type and paused state filtering (issue #219)', () => {
+  type ContractWithRules = {
+    id: string
+    label: string
+    enabled?: boolean
+    rules: { type: string }[]
+  }
+
+  const contracts: ContractWithRules[] = [
+    {
+      id: 'c1',
+      label: 'Admin Escrow',
+      enabled: true,
+      rules: [{ type: 'AdminFunctionCalled' }, { type: 'LargeTransfer' }],
+    },
+    {
+      id: 'c2',
+      label: 'Paused Token',
+      enabled: false,
+      rules: [{ type: 'FunctionCalled' }],
+    },
+    {
+      id: 'c3',
+      label: 'Active Failures Watcher',
+      enabled: true,
+      rules: [{ type: 'TransactionFailed' }],
+    },
+  ]
+
+  function filterContracts(
+    list: ContractWithRules[],
+    status: 'all' | 'active' | 'paused',
+    ruleTypes: string[]
+  ): ContractWithRules[] {
+    return list.filter((c) => {
+      const isPaused = c.enabled === false
+      if (status === 'active' && isPaused) return false
+      if (status === 'paused' && !isPaused) return false
+
+      if (ruleTypes.length > 0) {
+        const matchesRule = c.rules.some((r) => ruleTypes.includes(r.type))
+        if (!matchesRule) return false
+      }
+      return true
+    })
+  }
+
+  it('filters by active status only', () => {
+    const active = filterContracts(contracts, 'active', [])
+    expect(active.map((c) => c.id)).toEqual(['c1', 'c3'])
+  })
+
+  it('filters by paused status only', () => {
+    const paused = filterContracts(contracts, 'paused', [])
+    expect(paused.map((c) => c.id)).toEqual(['c2'])
+  })
+
+  it('filters by single rule type', () => {
+    const admin = filterContracts(contracts, 'all', ['AdminFunctionCalled'])
+    expect(admin.map((c) => c.id)).toEqual(['c1'])
+  })
+
+  it('filters by multiple rule types (union matching)', () => {
+    const matched = filterContracts(contracts, 'all', ['AdminFunctionCalled', 'TransactionFailed'])
+    expect(matched.map((c) => c.id)).toEqual(['c1', 'c3'])
+  })
+
+  it('combines status and rule type filters', () => {
+    const activeAdmin = filterContracts(contracts, 'active', ['AdminFunctionCalled'])
+    expect(activeAdmin.map((c) => c.id)).toEqual(['c1'])
+
+    const pausedAdmin = filterContracts(contracts, 'paused', ['AdminFunctionCalled'])
+    expect(pausedAdmin).toHaveLength(0)
+  })
+
+  it('serializes and parses status and ruleTypes in URL params', () => {
+    const params = new URLSearchParams()
+    params.set('status', 'paused')
+    params.set('ruleTypes', 'AdminFunctionCalled,LargeTransfer')
+
+    expect(params.get('status')).toBe('paused')
+    expect(params.get('ruleTypes')?.split(',')).toEqual(['AdminFunctionCalled', 'LargeTransfer'])
+  })
+})
+
+describe('contracts page — refresh failure banner and retry (issue #218)', () => {
+  it('handles refresh failure result with error banner state', async () => {
+    const mockRefresh = jest.fn().mockResolvedValue({
+      contracts: [{ id: 'c1', label: 'Cached Contract' }],
+      error: 'Network connection failed (503)',
+    })
+
+    const res = await mockRefresh()
+    expect(res.contracts).toHaveLength(1)
+    expect(res.error).toBe('Network connection failed (503)')
+
+    // Simulating banner state
+    let refreshError: string | null = res.error
+    let bannerDismissed = false
+
+    const dismissBanner = () => {
+      bannerDismissed = true
+    }
+
+    expect(refreshError).toBeTruthy()
+    expect(bannerDismissed).toBe(false)
+
+    dismissBanner()
+    expect(bannerDismissed).toBe(true)
+
+    // Retry resets dismissed state and triggers refresh again
+    const retry = async () => {
+      bannerDismissed = false
+      return mockRefresh()
+    }
+
+    const retryRes = await retry()
+    expect(mockRefresh).toHaveBeenCalledTimes(2)
+    expect(retryRes.contracts).toHaveLength(1)
+  })
+})

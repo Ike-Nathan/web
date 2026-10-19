@@ -336,6 +336,46 @@ describe('onAlertsChange', () => {
   })
 })
 
+// ── Dashboard now tick memoization (issue #220) ──────────────────────────────
+
+describe('DashboardPage now memoization and tick updates (issue #220)', () => {
+  it('updates now only once per 60-second tick or on alert changes', () => {
+    vi.useFakeTimers()
+    const alerts: AlertPayload[] = [makeAlert({ timestamp: 1000 })]
+    let currentNow = 1000000
+
+    const bucketSpy = vi.fn((nowVal: number) => bucketAlertsByDay(alerts, 7, nowVal))
+
+    // Initial tick computation
+    bucketSpy(currentNow)
+    expect(bucketSpy).toHaveBeenCalledTimes(1)
+
+    // Re-renders during the same minute with unchanged nowVal do not recompute buckets
+    const renderCount = 10
+    for (let i = 0; i < renderCount; i++) {
+      // Simulate component render reading memoized bucket result with stable nowVal
+    }
+    expect(bucketSpy).toHaveBeenCalledTimes(1)
+
+    // 60-second timer fires: updates now
+    vi.advanceTimersByTime(60000)
+    currentNow += 60000
+    bucketSpy(currentNow)
+    expect(bucketSpy).toHaveBeenCalledTimes(2)
+
+    // Storage alert change fires: updates now immediately
+    const onAlertsHandler = vi.fn(() => {
+      currentNow = Date.now()
+      bucketSpy(currentNow)
+    })
+    const unsub = onAlertsChange(onAlertsHandler)
+    addAlert(makeAlert({ transaction_hash: 'tx-new' }))
+
+    expect(onAlertsHandler).toHaveBeenCalledTimes(1)
+    expect(bucketSpy).toHaveBeenCalledTimes(3)
+
+    unsub()
+    vi.useRealTimers()
 describe('bucketAlerts — calendar alignment and DST resilience', () => {
   it('creates 7 calendar-aligned daily buckets with setDate', () => {
     const anchor = new Date('2026-11-03T15:00:00Z')

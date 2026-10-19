@@ -16,9 +16,12 @@ interface ContractCardProps {
   contract: WatchedContract
   lastAlertTime?: number
   highlight?: boolean
+  highlighted?: boolean
   selectable?: boolean
+  selectionMode?: boolean
   selected?: boolean
   onToggleSelect?: (id: string) => void
+  onToggleSelected?: (id: string) => void
   syncStatus?: SyncStatus
 }
 
@@ -26,11 +29,18 @@ export default function ContractCard({
   contract,
   lastAlertTime,
   highlight,
+  highlighted,
   selectable,
+  selectionMode,
   selected,
   onToggleSelect,
+  onToggleSelected,
   syncStatus,
 }: ContractCardProps) {
+  const isSelectable = Boolean(selectionMode ?? selectable)
+  const isHighlighted = Boolean(highlighted ?? highlight)
+  const handleToggle = onToggleSelected ?? onToggleSelect
+
   const hasWebhook = Boolean(contract.webhook_url)
   const sync = syncStatus ?? getSyncStatuses()[contract.id]
   const [, refresh] = useReducer((n: number) => n + 1, 0)
@@ -44,9 +54,9 @@ export default function ContractCard({
   const now = useNow(60_000)
 
   useEffect(() => {
-    if (!highlight) return
+    if (!isHighlighted) return
     ref.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-  }, [highlight])
+  }, [isHighlighted])
 
   useEffect(() => {
     window.addEventListener(SYNC_STATUS_EVENT, refresh)
@@ -54,7 +64,7 @@ export default function ContractCard({
   }, [])
 
   const handleRetry = async (e: React.MouseEvent) => {
-    // The card itself is a link / selection target.
+    // Prevent toggling the card when clicking the retry action
     e.preventDefault()
     e.stopPropagation()
     setRetrying(true)
@@ -66,18 +76,17 @@ export default function ContractCard({
     selected
       ? 'border-indigo-500 ring-2 ring-indigo-500/40'
       : 'border-zinc-800 hover:border-zinc-600 hover:bg-zinc-800/60'
-  } ${highlight ? 'ring-2 ring-indigo-500/40 motion-safe:animate-pulse' : ''}`
+  } ${isHighlighted ? 'ring-2 ring-indigo-500/40 motion-safe:animate-pulse' : ''}`
 
   const body = (
     <>
       <div className="flex items-start justify-between gap-3 mb-3">
         <div className="flex items-start gap-3 min-w-0">
-          {selectable && (
+          {isSelectable && (
             <input
               type="checkbox"
               checked={Boolean(selected)}
-              onChange={() => onToggleSelect?.(contract.id)}
-              onClick={(e) => e.stopPropagation()}
+              onChange={() => handleToggle?.(contract.id)}
               aria-label={`Select ${contract.label}`}
               className="mt-1 h-4 w-4 flex-shrink-0 rounded border-zinc-600 bg-zinc-800 text-indigo-500 focus:ring-indigo-500 focus:ring-offset-0 cursor-pointer"
             />
@@ -178,28 +187,21 @@ export default function ContractCard({
     </>
   )
 
-  if (selectable) {
+  if (isSelectable) {
     return (
-      <div
-        role="button"
-        tabIndex={0}
-        onClick={() => onToggleSelect?.(contract.id)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault()
-            onToggleSelect?.(contract.id)
-          }
-        }}
+      <label
+        id={`contract-${contract.id}`}
         className={`${cardClassName} cursor-pointer`}
       >
         {body}
-      </div>
+      </label>
     )
   }
 
   return (
     <Link
       href={`/contracts/${contract.id}`}
+      id={`contract-${contract.id}`}
       className={cardClassName}
       ref={ref}
     >
