@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useContracts } from '@/lib/useContracts'
 import { getAlerts, getNetworkDistribution } from '@/lib/storage'
+import { hasActiveWebhooks } from '@/lib/contractsApi'
 import ContractCard from '@/components/ContractCard'
 import EmptyState from '@/components/EmptyState'
 import NetworkBadge from '@/components/NetworkBadge'
@@ -37,9 +38,10 @@ function bucketAlerts(alerts: AlertPayload[], now: number, bucketMs: number, buc
 function AlertActivityChart({ title, buckets }: { title: string; buckets: AlertBucket[] }) {
   const max = Math.max(1, ...buckets.map((b) => b.count))
   const width = 320
-  const height = 120
+  const height = 100
   const gap = 6
   const barWidth = (width - gap * (buckets.length - 1)) / buckets.length
+  const isHourly = buckets.length > 7
 
   return (
     <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5">
@@ -48,36 +50,42 @@ function AlertActivityChart({ title, buckets }: { title: string; buckets: AlertB
         role="img"
         aria-label={`${title} bar chart`}
         viewBox={`0 0 ${width} ${height}`}
-        className="mt-4 w-full h-32"
+        className="mt-4 w-full h-24"
         preserveAspectRatio="none"
       >
         {buckets.map((bucket, i) => {
-          const barHeight = (bucket.count / max) * (height - 20)
+          const barHeight = (bucket.count / max) * height
           const x = i * (barWidth + gap)
           const y = height - barHeight
           return (
-            <g key={i}>
-              <rect
-                x={x}
-                y={y}
-                width={barWidth}
-                height={barHeight}
-                rx={2}
-                className="fill-indigo-500"
-              />
-              <text
-                x={x + barWidth / 2}
-                y={height - 4}
-                textAnchor="middle"
-                className="fill-zinc-500"
-                fontSize={9}
-              >
-                {bucket.label}
-              </text>
-            </g>
+            <rect
+              key={i}
+              x={x}
+              y={y}
+              width={barWidth}
+              height={barHeight}
+              rx={2}
+              className="fill-indigo-500"
+            />
           )
         })}
       </svg>
+      {/* HTML axis labels to prevent stretching and overlapping */}
+      <div className="flex items-center justify-between mt-2 text-[10px] text-zinc-500 select-none">
+        {buckets.map((bucket, i) => {
+          let visibility = 'text-center'
+          if (isHourly) {
+            if (i % 6 !== 0) {
+              visibility = i % 3 === 0 ? 'hidden sm:block text-center' : 'hidden lg:block text-center'
+            }
+          }
+          return (
+            <span key={i} className={`flex-1 ${visibility}`}>
+              {bucket.label}
+            </span>
+          )
+        })}
+      </div>
       <table className="sr-only">
         <caption>{title}</caption>
         <thead>
@@ -156,7 +164,7 @@ export default function DashboardPage() {
     return () => clearTimeout(timer)
   }, [refreshAlertsToday])
 
-  const activeWebhooks = contracts.filter((c) => c.webhook_url).length
+  const activeWebhooks = contracts.filter(hasActiveWebhooks).length
   const networkCounts = contracts.length > 0 ? getNetworkDistribution() : ({} as Record<Network, number>)
   const networkSummary = (['mainnet', 'testnet', 'futurenet'] as Network[])
     .filter((network) => networkCounts[network])
@@ -202,7 +210,7 @@ export default function DashboardPage() {
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
         {[
           { label: 'Contracts Watched', value: contracts.length, href: '/contracts' },
-          { label: 'Alerts Today', value: alertsToday, href: '/contracts?filter=alerts' },
+          { label: 'Alerts Today', value: alertsToday, href: '/contracts?filter=alerts-today' },
           { label: 'Active Webhooks', value: activeWebhooks, href: '/contracts?filter=webhooks' },
         ].map((stat) => (
           <Link key={stat.label} href={stat.href} className="bg-zinc-900 border border-zinc-800 rounded-xl p-5 hover:border-zinc-600 transition-colors">

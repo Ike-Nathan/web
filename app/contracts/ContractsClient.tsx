@@ -21,6 +21,12 @@ import {
   SortOption, 
   ContractViewMode 
 } from '@/lib/contractSort'
+import {
+  applyContractFilter,
+  parseContractFilter,
+  type ContractFilter,
+  CONTRACT_FILTER_LABELS,
+} from '@/lib/contractsApi'
 import ContractCard from '@/components/ContractCard'
 import EmptyState from '@/components/EmptyState'
 import ContractsSkeleton from '@/components/ContractsSkeleton'
@@ -60,6 +66,9 @@ export default function ContractsClient() {
   const [allContracts, setAllContracts] = useState<WatchedContract[]>([])
   const [syncStatuses, setSyncStatuses] = useState<Record<string, SyncStatus>>({})
   const [networkFilter, setNetworkFilter] = useState<NetworkFilter>('all')
+  const [contractFilter, setContractFilter] = useState<ContractFilter | null>(() => {
+    return parseContractFilter(searchParams?.get('filter'))
+  })
   const [sortBy, setSortBy] = useState<SortOption>('newest')
   const [search, setSearch] = useState(() => searchParams?.get('q') ?? '')
   const [mounted, setMounted] = useState(false)
@@ -90,6 +99,7 @@ export default function ContractsClient() {
     })
     setViewMode(initial.viewMode)
     setSortBy(initial.sortBy)
+    setContractFilter(parseContractFilter(searchParams?.get('filter')))
   }, [searchParams])
 
   useEffect(() => {
@@ -117,14 +127,18 @@ export default function ContractsClient() {
 
   useEffect(() => {
     setPage(1)
-  }, [networkFilter, search])
+  }, [networkFilter, search, contractFilter])
+
+  const contractFiltered = useMemo(() => {
+    return applyContractFilter(allContracts, contractFilter)
+  }, [allContracts, contractFilter])
 
   const networkFiltered = useMemo(() => {
     if (networkFilter === 'all') {
-      return allContracts
+      return contractFiltered
     }
-    return allContracts.filter((contract) => contract.network === networkFilter)
-  }, [allContracts, networkFilter])
+    return contractFiltered.filter((contract) => contract.network === networkFilter)
+  }, [contractFiltered, networkFilter])
 
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase()
@@ -326,6 +340,20 @@ export default function ContractsClient() {
               {filter.label}
             </button>
           ))}
+
+          {contractFilter && (
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-indigo-500/20 px-3 py-1.5 text-xs font-medium text-indigo-400 border border-indigo-500/30">
+              Filter: {CONTRACT_FILTER_LABELS[contractFilter] ?? contractFilter}
+              <button
+                type="button"
+                onClick={() => setContractFilter(null)}
+                className="ml-1 inline-flex h-4 w-4 items-center justify-center rounded-full hover:bg-indigo-500/30 hover:text-indigo-200"
+                aria-label="Remove filter"
+              >
+                ×
+              </button>
+            </span>
+          )}
         </div>
 
         <div className="flex items-center gap-2">
