@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useContracts } from '@/lib/useContracts'
-import { getAlerts, getNetworkDistribution } from '@/lib/storage'
+import { getAlerts, getNetworkDistribution, onAlertsChange } from '@/lib/storage'
 import ContractCard from '@/components/ContractCard'
 import EmptyState from '@/components/EmptyState'
 import NetworkBadge from '@/components/NetworkBadge'
@@ -106,6 +106,7 @@ export default function DashboardPage() {
   const [alertsToday, setAlertsToday] = useState(0)
   const [allAlerts, setAllAlerts] = useState<AlertPayload[]>([])
   const [mounted, setMounted] = useState(false)
+  const [now, setNow] = useState<number>(() => Date.now())
 
   const refreshAlertsToday = useCallback(() => {
     const collected: AlertPayload[] = []
@@ -116,10 +117,10 @@ export default function DashboardPage() {
     const startOfToday = new Date()
     startOfToday.setHours(0, 0, 0, 0)
     setAlertsToday(collected.filter((a) => a.timestamp >= startOfToday.getTime()).length)
+    setNow(Date.now())
     setMounted(true)
   }, [contracts])
 
-  const now = Date.now()
   const dailyBuckets = useMemo(
     () => bucketAlerts(allAlerts, now, DAY_MS, 7),
     [allAlerts, now]
@@ -128,6 +129,22 @@ export default function DashboardPage() {
     () => bucketAlerts(allAlerts, now, HOUR_MS, 24),
     [allAlerts, now]
   )
+
+  // Update `now` every 60 seconds
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setNow(Date.now())
+    }, 60000)
+    return () => clearInterval(timer)
+  }, [])
+
+  // Update `now` on alert changes
+  useEffect(() => {
+    return onAlertsChange(() => {
+      refreshAlertsToday()
+      setNow(Date.now())
+    })
+  }, [refreshAlertsToday])
 
   useEffect(() => {
     refreshAlertsToday()
