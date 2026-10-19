@@ -242,7 +242,7 @@ interface SendTestWebhookTransport {
   /**
    * Signing secret for the delivery. When provided (e.g. the stored
    * `webhook_secret` of a watched contract), the request body is signed with
-   * HMAC-SHA256 and the signature is sent in the `SIGNATURE_HEADER` header.
+   * HMAC-SHA256 (timestamped, `t=…,v1=…`) and sent in the `SIGNATURE_HEADER` header.
    */
   secret?: string
 }
