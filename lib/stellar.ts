@@ -57,42 +57,90 @@ export interface NormalizedContractIdResult {
   network?: Network
 }
 
+/** Looks like a URL or a bare host/path, e.g. "stellarchain.io/contracts/C…". */
+const URL_LIKE = /^(?:https?:\/\/|www\.|[a-z0-9-]+(?:\.[a-z0-9-]+)+\/|\/)/i
+/**
+ * A StrKey once whitespace/line breaks are removed: a version letter plus 55
+ * base32 characters (68 for a muxed M… address).
+ */
+const STRKEY_LIKE = /^[A-Z][A-Z2-7]{55}(?:[A-Z2-7]{13})?$/i
+/** Candidate contract IDs inside a URL. */
+const CONTRACT_CANDIDATE = /C[A-Z2-7]{55}(?![A-Z2-7])/gi
+
+function networkFromUrl(url: string): Network | undefined {
+  const lower = url.toLowerCase()
+  // stellar.expert: /explorer/<public|testnet|futurenet>/
+  const expert = lower.match(/stellar\.expert\/explorer\/(public|testnet|futurenet)\//)
+  if (expert) return expert[1] === 'public' ? 'mainnet' : (expert[1] as Network)
+  // Stellar Lab: ?$=network$id=<testnet|futurenet|mainnet>
+  const lab = lower.match(/network\$id=(testnet|futurenet|mainnet|public)/)
+  if (lab) return lab[1] === 'public' ? 'mainnet' : (lab[1] as Network)
+  // StellarChain: testnet./futurenet. subdomains; the bare host is mainnet.
+  const chain = lower.match(/(?:^|\/\/)(?:(testnet|futurenet)\.)?(?:www\.)?stellarchain\.io\b/)
+  if (chain) return (chain[1] as Network | undefined) ?? 'mainnet'
+  // Anything else (e.g. explorers linked from Freighter): look for the name.
+  if (/\bfuturenet\b/.test(lower)) return 'futurenet'
+  if (/\btestnet\b/.test(lower)) return 'testnet'
+  if (/\b(?:public|pubnet|mainnet)\b/.test(lower)) return 'mainnet'
+  return undefined
+}
+
 /**
  * Normalizes user-pasted contract IDs (#16):
- * - Trims and removes surrounding whitespace/newlines
- * - Extracts contract ID and network from explorer URLs
- * - Converts to uppercase
+ * - URLs (stellar.expert, StellarChain, Stellar Lab and other explorers):
+ *   extracts the contract ID and, when recognisable, the network
+ * - Bare StrKeys: removes whitespace/line breaks and upper-cases
+ * - Anything else is returned untouched, so the user still sees what they
+ *   pasted and gets a meaningful validation error
  */
 export function normalizeContractId(input: string): NormalizedContractIdResult {
   if (!input) return { contractId: '' }
-  let cleaned = input.trim()
+  const trimmed = input.trim()
 
-  const explorerMatch = cleaned.match(
-    /(?:https?:\/\/)?(?:[a-zA-Z0-9-]+\.)?stellar\.expert\/explorer\/(public|testnet|futurenet)\/contract\/([A-Za-z0-9]+)/i
-  )
-
-  if (explorerMatch) {
-    const rawNetwork = explorerMatch[1].toLowerCase()
-    const rawId = explorerMatch[2].trim().toUpperCase()
-    const network: Network =
-      rawNetwork === 'public' ? 'mainnet' : (rawNetwork as Network)
-    return {
-      contractId: rawId,
-      network,
+  if (URL_LIKE.test(trimmed)) {
+    const candidates = trimmed.match(CONTRACT_CANDIDATE) ?? []
+    const contractId = candidates
+      .map((c) => c.toUpperCase())
+      .find((c) => isValidContractId(c))
+    if (contractId) {
+      const network = networkFromUrl(trimmed)
+      return network ? { contractId, network } : { contractId }
     }
-  }
-
-  const pathMatch = cleaned.match(/\/contract\/([A-Za-z0-9]+)/i)
-  if (pathMatch) {
-    return {
-      contractId: pathMatch[1].trim().toUpperCase(),
+    // Keep supporting bare explorer paths such as /contract/<id>.
+    const pathMatch = trimmed.match(/\/contracts?\/([A-Za-z0-9]+)/i)
+    if (pathMatch) {
+      const network = networkFromUrl(trimmed)
+      const id = pathMatch[1].toUpperCase()
+      return network ? { contractId: id, network } : { contractId: id }
     }
+    return { contractId: input }
   }
 
-  cleaned = cleaned.replace(/\s+/g, '').toUpperCase()
-  return {
-    contractId: cleaned,
+  const compact = trimmed.replace(/\s+/g, '')
+  if (STRKEY_LIKE.test(compact)) {
+    return { contractId: compact.toUpperCase() }
   }
+
+  return { contractId: input }
+}
+
+/**
+ * A specific hint when the input is a valid Stellar address that is not a
+ * contract (an account G… or muxed account M…), or null otherwise.
+ */
+export function nonContractAddressHint(input: string): string | null {
+  const id = input.trim().toUpperCase()
+  try {
+    if (StrKey.isValidEd25519PublicKey(id)) {
+      return 'This is an account address (G…), not a contract. Paste the contract ID, which starts with C.'
+    }
+    if (StrKey.isValidMed25519PublicKey(id)) {
+      return 'This is a muxed account address (M…), not a contract. Paste the contract ID, which starts with C.'
+    }
+  } catch {
+    // not a StrKey
+  }
+  return null
 }
 
 function buildContractInstanceLedgerKey(contractId: string): string {

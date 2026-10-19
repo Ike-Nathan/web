@@ -6,6 +6,7 @@ import { AlertPayload, AlertRule, Network, WatchedContract, parseAlertRule } fro
 import {
   isValidContractId,
   normalizeContractId,
+  nonContractAddressHint,
   validateWebhookUrl,
   webhookUrlMessage,
 } from '@/lib/stellar'
@@ -90,6 +91,9 @@ export default function NewContractPage() {
   const rulesId = useId()
   const rulesErrorId = useId()
   const walletErrorId = useId()
+
+  // A valid account/muxed address pasted by mistake gets a specific hint.
+  const addressHint = useMemo(() => nonContractAddressHint(contractId), [contractId])
 
   const isDirty = Boolean(
     label.trim() || contractId.trim() || webhookUrl.trim() || webhookSecret.trim() || rules.length > 0
@@ -265,7 +269,9 @@ export default function NewContractPage() {
     if (!trimmedContractId) {
       e.contract_id = 'Contract ID is required'
     } else if (!isValidContractId(trimmedContractId)) {
-      e.contract_id = 'Must be a valid Soroban contract address (starts with C, 56 chars)'
+      e.contract_id =
+        nonContractAddressHint(trimmedContractId) ??
+        'Must be a valid Soroban contract address (starts with C, 56 chars)'
     } else {
       const isDuplicate = getContracts().some(
         (c) => c.contract_id === trimmedContractId && c.network === network
@@ -549,9 +555,15 @@ export default function NewContractPage() {
               }
               className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2.5 text-sm text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-indigo-500 transition-colors font-mono"
             />
-            <p id={contractIdHintId} className="text-xs text-zinc-500 mt-1">
-              Starts with C, 56 characters.
-            </p>
+            {addressHint && !errors.contract_id ? (
+              <p id={contractIdHintId} className="text-xs text-amber-400 mt-1" data-testid="contract-id-address-hint">
+                {addressHint}
+              </p>
+            ) : (
+              <p id={contractIdHintId} className="text-xs text-zinc-500 mt-1">
+                Starts with C, 56 characters.
+              </p>
+            )}
             {errors.contract_id && <p id={contractIdErrorId} className="text-xs text-red-400 mt-1">{errors.contract_id}</p>}
             <ContractVerification
               network={network}
