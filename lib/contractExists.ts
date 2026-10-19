@@ -6,10 +6,11 @@ import type { Network } from '@/types'
  * instance key, base64-encoded. A contract that exists on the target network
  * has an entry under this key.
  */
-export const CONTRACT_INSTANCE_KEY = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='
+export const CONTRACT_INSTANCE_KEY =
+  'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='
 
 /** Default Soroban RPC timeout, in milliseconds. */
-export const CONTRACT_LOOKUP_TIMEOUT_MS = 8000
+const CONTRACT_LOOKUP_TIMEOUT_MS = 8000
 
 export type ContractLookupStatus = 'found' | 'not_found' | 'unavailable'
 
@@ -81,7 +82,9 @@ export async function contractExists(
 
     if (body.error) {
       const reason =
-        typeof body.error === 'string' ? body.error : body.error.message ?? 'RPC error'
+        typeof body.error === 'string'
+          ? body.error
+          : (body.error.message ?? 'RPC error')
       return { status: 'unavailable', reason }
     }
 
@@ -98,7 +101,10 @@ export async function contractExists(
         ? { status: 'unavailable', reason: 'Request cancelled' }
         : { status: 'unavailable', reason: 'RPC timed out' }
     }
-    return { status: 'unavailable', reason: error instanceof Error ? error.message : 'RPC error' }
+    return {
+      status: 'unavailable',
+      reason: error instanceof Error ? error.message : 'RPC error',
+    }
   } finally {
     clearTimeout(timeoutId)
     signal?.removeEventListener('abort', onCallerAbort)

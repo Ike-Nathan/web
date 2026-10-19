@@ -22,6 +22,12 @@ function resolveNetwork(id: string | null | undefined): Network | null {
   if (!id) return null
   return FREIGHTER_NETWORK_MAP[id.toUpperCase()] ?? null
 }
+/**
+ * `checking` is the initial state: the extension's answer is unknown until
+ * `readFreighterConnection()` settles, and showing "Unavailable" first made
+ * the badge flash grey on every navigation.
+ */
+export type WalletStatus = 'checking' | 'connected' | 'disconnected' | 'unavailable'
 
 export default function WalletStatusBadge() {
   const [status, setStatus] = useState<WalletStatus>('checking')
@@ -32,6 +38,7 @@ export default function WalletStatusBadge() {
 
     // One probe on mount; afterwards the app-level watcher publishes every
     // connect/disconnect/network change through the wallet event bus.
+    // Probe the extension once on mount to learn the current connection.
     readFreighterConnection()
       .then((connection) => {
         if (cancelled) return
@@ -43,12 +50,19 @@ export default function WalletStatusBadge() {
         setNetworkId(connection.network ?? null)
       })
       .catch(() => {
+        // A rejected probe (extension mid-reload, locked wallet, missing
+        // permissions) is not an error the user can act on: report
+        // "Disconnected" instead of leaving the badge stuck.
         if (!cancelled) setStatus('disconnected')
       })
 
     const unsubscribe = subscribeWallet((publicKey, network) => {
       setStatus(publicKey ? 'connected' : 'disconnected')
       setNetworkId(network ?? null)
+    // The probe above only covers this mount. A connect or disconnect
+    // triggered anywhere else in the app arrives on the event bus.
+    const unsubscribe = subscribeWallet((publicKey) => {
+      setStatus(publicKey ? 'connected' : 'disconnected')
     })
 
     return () => {

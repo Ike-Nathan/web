@@ -9,7 +9,6 @@ import {
   connectFreighter,
   FreighterUnavailableError,
   openFreighterInstallPage,
-  readFreighterConnection,
 } from '@/lib/freighter'
 
 const WALLET_STORAGE_KEY = 'freighter_public_key'
@@ -50,7 +49,6 @@ export default function FreighterConnect({
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [missingExtension, setMissingExtension] = useState(false)
-  const [isConnecting, setIsConnecting] = useState(false)
 
   // Held in a ref rather than listed as a dependency: callers commonly pass an
   // inline arrow, which changes identity on every parent render. Depending on it
@@ -125,8 +123,7 @@ export default function FreighterConnect({
   }, [])
 
   async function connect() {
-    if (isConnecting) return
-    setIsConnecting(true)
+    if (loading) return
     setLoading(true)
     setError(null)
 
@@ -147,14 +144,18 @@ export default function FreighterConnect({
       window.__freighterPublicKey = session.publicKey
       localStorage.setItem(WALLET_STORAGE_KEY, session.publicKey)
       onConnect?.(session.publicKey)
+      const session = await connectFreighter()
+      publish(session.publicKey)
+      setNetwork(session.network ?? null)
+      setMissingExtension(false)
     } catch (err) {
       if (err instanceof FreighterUnavailableError) {
+        setMissingExtension(true)
         openFreighterInstallPage()
       }
       setError(err instanceof Error ? err.message : 'Connection rejected')
     } finally {
       setLoading(false)
-      setIsConnecting(false)
     }
   }
 
@@ -164,7 +165,6 @@ export default function FreighterConnect({
   function disconnect() {
     publish(null)
     setNetwork(null)
-    localStorage.removeItem(WALLET_STORAGE_KEY)
     onDisconnect?.()
   }
 
@@ -261,11 +261,6 @@ export default function FreighterConnect({
         )}
         Connect Freighter
       </button>
-      {error ? (
-        <p className="mt-2 text-xs text-red-400" role="alert">
-          {error}
-        </p>
-
       {missingExtension ? (
         <div className="mt-2 flex flex-col gap-1.5 text-xs text-zinc-400" role="alert">
           <p>
@@ -274,7 +269,6 @@ export default function FreighterConnect({
               href="https://www.freighter.app/"
               target="_blank"
               rel="noopener noreferrer"
-              onClick={handleInstallClick}
               className="text-indigo-400 underline hover:text-indigo-300"
             >
               Install Freighter
@@ -284,11 +278,17 @@ export default function FreighterConnect({
             type="button"
             onClick={async () => {
               setError(null)
-              if (window.freighter) {
+              try {
+                const session = await connectFreighter()
+                publish(session.publicKey)
+                setNetwork(session.network ?? null)
                 setMissingExtension(false)
-                await connect()
-              } else {
-                setError('Freighter extension still not detected')
+              } catch (err) {
+                if (err instanceof FreighterUnavailableError) {
+                  setError('Freighter extension still not detected')
+                } else {
+                  setError(err instanceof Error ? err.message : 'Connection rejected')
+                }
               }
             }}
             className="inline-flex items-center px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-xs text-zinc-200 border border-zinc-700 transition-colors self-start"
@@ -296,8 +296,11 @@ export default function FreighterConnect({
             I&apos;ve installed it – check again
           </button>
         </div>
-      ) : error ? (
-        <p className="mt-2 text-xs text-red-400" role="alert">{error}</p>
+      ) : null}
+      {error ? (
+        <p className="mt-2 text-xs text-red-400" role="alert">
+          {error}
+        </p>
       ) : null}
     </div>
   )

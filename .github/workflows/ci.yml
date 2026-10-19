@@ -30,6 +30,9 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      - name: Check unused code
+        run: npm run knip
+
       - name: Format check
         run: npm run format:check
 

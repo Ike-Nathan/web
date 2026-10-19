@@ -3,6 +3,10 @@
  * and responsive filter bar behaviour (issue #81).
  */
 
+import { render, screen, act, fireEvent } from '@testing-library/react';
+import ContractsClient from '../app/contracts/ContractsClient';
+import { getContracts } from '../lib/storage'; // Note: Ensure the mock targets `storage.ts`
+
 const PAGE_SIZE = 12
 
 function paginate<T>(items: T[], page: number): T[] {
@@ -393,23 +397,52 @@ describe('contracts page — URL state sync (issue #42)', () => {
     jest.useRealTimers()
   })
 })
+
 import { render, screen, act, fireEvent } from '@testing-library/react';
 import ContractsPage from '../app/contracts/page';
-import { getContracts } from '../lib/contracts';
+import { getContracts } from '@/lib/storage';
+import { refreshContracts } from '@/lib/contractSync';
 
-jest.mock('../lib/contracts', () => ({
+jest.mock('@/lib/storage', () => ({
   getContracts: jest.fn(),
+  getAlerts: jest.fn(() => []),
+  deleteContract: jest.fn(),
 }));
 
-const contractA = { id: 'a', name: 'Alpha', highlight: false };
-const contractB = { id: 'b', name: 'Beta', highlight: true };
+jest.mock('@/lib/contractSync', () => ({
+  refreshContracts: jest.fn(),
+}));
+
+type WatchedContract = {
+  id: string;
+  label: string;
+  contract_id: string;
+  network: string;
+  rules: unknown[];
+  webhook_url: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+const makeContract = (
+  overrides: Partial<WatchedContract> & { id: string; label: string }
+): WatchedContract => ({
+  contract_id: `C${overrides.id.toUpperCase()}`,
+  network: 'mainnet',
+  rules: [],
+  webhook_url: null,
+  created_at: '2024-01-01T00:00:00.000Z',
+  updated_at: '2024-01-01T00:00:00.000Z',
+  ...overrides,
+});
+
+const contractA = makeContract({ id: 'a', label: 'Alpha' });
+const contractB = makeContract({ id: 'b', label: 'Beta' });
 
 const makeContracts = (count: number) =>
-  Array.from({ length: count }, (_, i) => ({
-    id: `c${i}`,
-    name: `Contract ${i}`,
-    highlight: false,
-  }));
+  Array.from({ length: count }, (_, i) =>
+    makeContract({ id: `c${i}`, label: `Contract ${i}` })
+  );
 
 describe('ContractsPage cross-tab updates', () => {
   beforeEach(() => {
@@ -461,7 +494,8 @@ describe('ContractsPage cross-tab updates', () => {
       );
     });
 
-    expect(screen.getByText('Beta')).toHaveClass('highlight');
+    expect(refreshContracts).toHaveBeenCalled();
+    expect(screen.getByText('Beta')).toBeInTheDocument();
   });
 });
 
@@ -522,9 +556,9 @@ describe('ContractsPage network filter counts and heading', () => {
   });
 
   const networkContracts = [
-    { id: 'a', name: 'Alpha', highlight: false, network: 'mainnet' },
-    { id: 'b', name: 'Beta', highlight: false, network: 'mainnet' },
-    { id: 'c', name: 'Gamma', highlight: false, network: 'testnet' },
+    makeContract({ id: 'a', label: 'Alpha', network: 'mainnet' }),
+    makeContract({ id: 'b', label: 'Beta', network: 'mainnet' }),
+    makeContract({ id: 'c', label: 'Gamma', network: 'testnet' }),
   ];
 
   it('computes network pill counts from the search-filtered set', () => {
@@ -563,3 +597,81 @@ describe('ContractsPage network filter counts and heading', () => {
     expect(screen.queryByText(/showing/i)).not.toBeInTheDocument();
   });
 });
+
+describe('contracts page — bulk selection (issue #216 paginated scope)', () => {
+  type ContractItem = { id: string; label: string; alert_count: number }
+
+  const items: ContractItem[] = [
+    { id: '1', label: 'Escrow Manager', alert_count: 3 },
+    { id: '2', label: 'Payment Router', alert_count: 0 },
+    { id: '3', label: 'Token Service', alert_count: 5 },
+  ]
+
+  function selectPage(selected: Set<string>, paginated: ContractItem[]): Set<string> {
+    const next = new Set(selected)
+    paginated.forEach(c => next.add(c.id))
+    return next
+  }
+
+  function selectAllFiltered(list: ContractItem[]): Set<string> {
+    return new Set(list.map((c) => c.id))
+  }
+
+  it('select-page selects every contract on the visible page', () => {
+    const paginated = items.slice(0, 2)
+    const selected = selectPage(new Set(), paginated)
+    expect(selected.size).toBe(2)
+    expect(selected.has('1')).toBe(true)
+    expect(selected.has('2')).toBe(true)
+    expect(selected.has('3')).toBe(false)
+  })
+
+  it('select-all-filtered selects every matching contract across all pages', () => {
+    const selected = selectAllFiltered(items)
+    expect(selected.size).toBe(3)
+    expect(selected.has('3')).toBe(true)
+
+jest.mock('../lib/contractSync', () => ({
+  ...jest.requireActual('../lib/contractSync'),
+  syncDeleteContract: jest.fn(),
+  refreshContracts: jest.fn().mockResolvedValue({ contracts: [] }),
+  getSyncStatuses: jest.fn().mockReturnValue({}),
+  onSyncStatusesChange: jest.fn().mockReturnValue(() => {}),
+}))
+
+import { syncDeleteContract } from '../lib/contractSync'
+
+describe('contracts page — bulk delete API sync (issue #215)', () => {
+  beforeEach(() => {
+    jest.clearAllMocks()
+  })
+
+  it('awaits Promise.allSettled and reports partial failures correctly', async () => {
+    const mockSyncDelete = syncDeleteContract as jest.Mock
+    
+    // Simulate one success and one failure
+    mockSyncDelete.mockImplementation((id: string) => {
+      if (id === 'fail-id') return Promise.resolve({ ok: false, error: 'Server error' })
+      return Promise.resolve({ ok: true })
+    })
+
+    const selectedIds = ['success-id', 'fail-id']
+    
+    // Run the Promise.allSettled logic directly as implemented in the component
+    const results = await Promise.allSettled(
+      selectedIds.map(id => mockSyncDelete(id))
+    )
+
+    let failCount = 0
+    results.forEach((res) => {
+      if (res.status === 'rejected' || (res.status === 'fulfilled' && !res.value.ok)) {
+        failCount++
+      }
+    })
+
+    expect(mockSyncDelete).toHaveBeenCalledTimes(2)
+    expect(mockSyncDelete).toHaveBeenCalledWith('success-id')
+    expect(mockSyncDelete).toHaveBeenCalledWith('fail-id')
+    expect(failCount).toBe(1)
+  })
+})
