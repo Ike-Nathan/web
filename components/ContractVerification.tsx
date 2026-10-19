@@ -1,16 +1,25 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { contractExists, type ContractLookupStatus } from '@/lib/contractExists';
 import { isValidContractId } from '@/lib/stellar';
 import type { Network } from '@/types';
 
-type CheckState = 'idle' | 'checking' | ContractLookupStatus;
+export type CheckState = 'idle' | 'checking' | ContractLookupStatus;
 
 interface ContractVerificationProps {
   network: Network;
   contractId: string;
   className?: string;
+  /** Current check state, owned by the parent so it can gate saving. */
+  status: CheckState;
+  /** Optional reason reported by the lookup when it could not verify. */
+  reason?: string | null;
+  /** Whether the user has acknowledged a "not found" result. */
+  overridden: boolean;
+  onOverrideChange: (overridden: boolean) => void;
+  /** Called with every result of the debounced deployment check. */
+  onStatusChange: (status: CheckState, reason?: string | null) => void;
 }
 
 /** Re-check after this long without typing, to avoid a request per keystroke. */
@@ -28,35 +37,37 @@ export default function ContractVerification({
   network,
   contractId,
   className = '',
+  status,
+  reason = null,
+  overridden,
+  onOverrideChange,
+  onStatusChange,
 }: ContractVerificationProps) {
   const id = contractId.trim();
   const checkable = isValidContractId(id);
-  const [state, setState] = useState<CheckState>('idle');
-  const [reason, setReason] = useState<string | null>(null);
-  const [overridden, setOverridden] = useState(false);
+  const state = status;
 
   useEffect(() => {
-    setOverridden(false);
+    onOverrideChange(false);
     if (!checkable) {
-      setState('idle');
-      setReason(null);
+      onStatusChange('idle', null);
       return;
     }
 
     const controller = new AbortController();
     const timer = setTimeout(async () => {
-      setState('checking');
-      setReason(null);
+      onStatusChange('checking', null);
       const result = await contractExists(network, id, { signal: controller.signal });
       if (controller.signal.aborted) return;
-      setState(result.status);
-      setReason(result.reason ?? null);
+      onStatusChange(result.status, result.reason ?? null);
     }, DEBOUNCE_MS);
 
     return () => {
       clearTimeout(timer);
       controller.abort();
     };
+    // onOverrideChange/onStatusChange are expected to be stable callbacks.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, network, checkable]);
 
   if (!checkable) return null;
@@ -102,7 +113,7 @@ export default function ContractVerification({
         <input
           type="checkbox"
           checked={overridden}
-          onChange={(e) => setOverridden(e.target.checked)}
+          onChange={(e) => onOverrideChange(e.target.checked)}
           className="accent-indigo-600"
         />
         I know this contract is deployed on {network} — save anyway

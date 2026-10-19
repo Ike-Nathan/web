@@ -1,5 +1,11 @@
 'use client'
 
+import { useState, useRef, useEffect, useMemo } from 'react'
+import { useRouter } from 'next/navigation'
+import { AlertPayload, AlertRule, Network, WatchedContract } from '@/types'
+import { isValidContractId, isValidUrl, normalizeContractId } from '@/lib/stellar'
+import { syncSaveContract } from '@/lib/contractSync'
+import { addContract, getContracts, saveContract } from '@/lib/storage'
 import { useState, useRef, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { AlertRule, Network, WatchedContract } from '@/types'
@@ -17,6 +23,8 @@ import { syncSaveContract } from '@/lib/contractSync'
 import { getContracts } from '@/lib/storage'
 import { buildTestWebhookPayload, describeRule, sendTestWebhook } from '@/lib/api'
 import { generateId } from '@/lib/id'
+import { parseAlertRule } from '@/lib/alertRules'
+import CopyButton from '@/components/CopyButton'
 import { isNetworkMatch } from '@/lib/freighter'
 import ContractVerification from '@/components/ContractVerification'
 import { useFreighterConnection } from '@/lib/useFreighterConnection'
@@ -55,9 +63,12 @@ export default function NewContractPage() {
   
   const [errors, setErrors] = useState<FormErrors>({})
   const [saving, setSaving] = useState(false)
-  const [isCheckingContract, setIsCheckingContract] = useState(false)
-  const [contractNotFoundWarning, setContractNotFoundWarning] = useState<string | null>(null)
-  const [overrideNotFound, setOverrideNotFound] = useState(false)
+  const [verificationStatus, setVerificationStatus] = useState<
+    'idle' | 'checking' | 'found' | 'not_found' | 'error'
+  >('idle')
+  const [verificationReason, setVerificationReason] = useState<string | null>(null)
+  const [verificationOverridden, setVerificationOverridden] = useState(false)
+  const [prefillNotice, setPrefillNotice] = useState<string | null>(null)
   const [showDiscardModal, setShowDiscardModal] = useState(false)
   
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null)
@@ -202,7 +213,24 @@ export default function NewContractPage() {
       }
       if (typeof data.label === 'string') setLabel(data.label)
       if (typeof data.webhook_url === 'string') setWebhookUrl(data.webhook_url)
-      if (Array.isArray(data.rules)) setRules(data.rules)
+      if (Array.isArray(data.rules)) {
+        const validRules: AlertRule[] = []
+        let dropped = 0
+        for (const raw of data.rules) {
+          const parsed = parseAlertRule(raw)
+          if (parsed) {
+            validRules.push(parsed)
+          } else {
+            dropped += 1
+          }
+        }
+        setRules(validRules)
+        if (dropped > 0) {
+          setPrefillNotice(
+            `Skipped ${dropped} invalid rule${dropped === 1 ? '' : 's'} from the duplicated contract.`
+          )
+        }
+      }
     } catch {
       // ignore malformed pre-fill data
       // ignore
@@ -271,29 +299,6 @@ export default function NewContractPage() {
     return Object.keys(validate()).length === 0
   }
 
-  async function checkContractOnNetwork(id: string, targetNetwork: Network): Promise<boolean> {
-    if (!id || !isValidContractId(id)) {
-      setContractNotFoundWarning(null)
-      return true
-    }
-    setIsCheckingContract(true)
-    try {
-      const exists = await contractExists(targetNetwork, id)
-      if (!exists) {
-        setContractNotFoundWarning(`Contract not found on ${targetNetwork}`)
-        return false
-      } else {
-        setContractNotFoundWarning(null)
-        return true
-      }
-    } catch {
-      setContractNotFoundWarning(null)
-      return true
-    } finally {
-      setIsCheckingContract(false)
-    }
-  }
-
   function handleContractIdBlur() {
     const norm = normalizeContractId(contractId)
     let updatedId = contractId.trim()
@@ -306,9 +311,6 @@ export default function NewContractPage() {
       targetNetwork = norm.network
       setNetwork(targetNetwork)
       checkNetworkMismatch(targetNetwork)
-    }
-    if (updatedId && isValidContractId(updatedId)) {
-      void checkContractOnNetwork(updatedId, targetNetwork)
     }
   }
 
@@ -325,9 +327,6 @@ export default function NewContractPage() {
         targetNetwork = norm.network
         setNetwork(targetNetwork)
         checkNetworkMismatch(targetNetwork)
-      }
-      if (isValidContractId(norm.contractId)) {
-        void checkContractOnNetwork(norm.contractId, targetNetwork)
       }
     }
   }
@@ -353,6 +352,9 @@ export default function NewContractPage() {
       return
     }
 
+    // Block saving only on an authoritative not_found result without an override.
+    if (verificationStatus === 'not_found' && !verificationOverridden) {
+      return
     if (!overrideNotFound) {
       setIsCheckingContract(true)
       const exists = await contractExists(network, contractId.trim())
@@ -497,7 +499,15 @@ export default function NewContractPage() {
           <p className="text-sm text-zinc-500 mt-1">Register a Soroban contract to monitor</p>
         </div>
 
-        <div className="space-y-5">
+        <form onSubmit={handleSave} noValidate className="space-y-5">
+          {prefillNotice && (
+            <div
+              className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-lg text-xs text-amber-300"
+              data-testid="prefill-notice"
+            >
+              {prefillNotice}
+            </div>
+          )}
           {/* Label */}
           <div>
             <label className="block text-sm font-medium text-zinc-300 mb-1.5">Label</label>
@@ -535,22 +545,32 @@ export default function NewContractPage() {
             <input
               ref={contractIdInputRef}
               type="text"
+              autoComplete="off"
               placeholder="CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
               value={contractId}
               onChange={(e) => {
                 setContractId(e.target.value)
                 setErrors((prev) => ({ ...prev, contract_id: undefined }))
-                setContractNotFoundWarning(null)
               }}
               onBlur={handleContractIdBlur}
               onPaste={handleContractIdPaste}
               className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2.5 text-sm text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-indigo-500 transition-colors font-mono"
             />
             {errors.contract_id && <p className="text-xs text-red-400 mt-1">{errors.contract_id}</p>}
-            {isCheckingContract && (
-              <p className="text-xs text-zinc-400 mt-1 flex items-center gap-1.5" data-testid="contract-checking">
-                <span className="inline-block w-3 h-3 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />
-                Verifying contract on {network}…
+            <ContractVerification
+              network={network}
+              contractId={contractId}
+              className="mt-1"
+              onStatusChange={(status, reason) => {
+                setVerificationStatus(status)
+                setVerificationReason(reason ?? null)
+              }}
+              overridden={verificationOverridden}
+              onOverrideChange={setVerificationOverridden}
+            />
+            {verificationStatus === 'not_found' && !verificationOverridden && (
+              <p className="text-xs text-amber-400 mt-1" data-testid="verification-blocking">
+                {verificationReason || `Contract not found on ${network}`}. Tick the override above to save anyway.
               </p>
             )}
             {contractNotFoundWarning && (
@@ -621,6 +641,8 @@ export default function NewContractPage() {
             <label className="block text-sm font-medium text-zinc-300 mb-1.5">Webhook URL</label>
             <input
               ref={webhookUrlInputRef}
+              type="text"
+              inputMode="url"
               type="url"
               placeholder="https://example.com/webhook"
               value={webhookUrl}
@@ -679,12 +701,29 @@ export default function NewContractPage() {
               {errors.wallet && <p className="text-xs text-red-400 mt-1">{errors.wallet}</p>}
             </div>
           )}
+
+          <div className="flex gap-3 pt-2">
+            <button
+              type="submit"
+              disabled={saving}
+              className="flex-1 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium rounded-lg px-4 py-2.5 transition-colors"
+            >
+              {saving ? 'Saving…' : 'Save Contract'}
+            </button>
+            <WebhookTestButton
+              webhookUrl={webhookUrl}
+              contractId={contractId}
+              network={network}
+              webhookSecret={webhookSecret}
+              onError={(field, message) => setErrors((prev) => ({ ...prev, [field]: message }))}
+              className="mt-0"
+            />
+          </div>
         </div>
 
         <div className="flex items-center gap-3 pt-2">
           <button
-            type="button"
-            onClick={handleSave}
+            type="submit"
             disabled={saving || !isFormValid()}
             className="flex-1 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium rounded-lg px-4 py-2.5 transition-colors"
           >
@@ -697,6 +736,18 @@ export default function NewContractPage() {
           >
             Cancel
           </button>
+          <button
+            type="button"
+            onClick={handleTestWebhook}
+            disabled={testStatus === 'sending'}
+            className="bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 text-zinc-200 text-sm font-medium rounded-lg px-4 py-2.5 transition-colors"
+          >
+            {testStatus === 'sending' ? 'Testing…' : 'Test Webhook'}
+          </button>
+        </div>
+        </form>
+        {testStatus === 'ok' && <p className="text-xs text-emerald-400">Webhook delivered successfully.</p>}
+        {testStatus === 'error' && <p className="text-xs text-red-400">{testError}</p>}
           <WebhookTestButton
             webhookUrl={webhookUrl}
             contractId={contractId}

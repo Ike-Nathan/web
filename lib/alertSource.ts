@@ -1,3 +1,4 @@
+import { apiFetch, isApiConfigured } from '@/lib/api'
 import { apiFetch, type ApiError } from '@/lib/api'
 import { addAlert, getAlerts } from '@/lib/storage'
 import { isAlertRuleType, type AlertPayload, type Network } from '@/types'
@@ -17,10 +18,6 @@ export const ALERT_POLL_INTERVAL_MS = 30000
 /** Upper bound for the polling interval while the core keeps failing. */
 export const ALERT_POLL_MAX_INTERVAL_MS = 5 * 60 * 1000
 const ALERT_POLL_INTERVAL_MS = 30000
-
-export function isApiConfigured(): boolean {
-  return Boolean(process.env.NEXT_PUBLIC_API_URL)
-}
 
 export async function fetchAlerts(
   contractId: string,

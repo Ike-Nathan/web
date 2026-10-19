@@ -1,3 +1,4 @@
+import { apiFetch, isApiConfigured } from '@/lib/api'
 import { apiFetch } from '@/lib/api'
 import { validateContractEntry } from '@/lib/importSchema'
 import {
@@ -110,9 +111,7 @@ export function applyContractFilter(
   return contracts
 }
 
-export function isApiConfigured(): boolean {
-  return Boolean(process.env.NEXT_PUBLIC_API_URL)
-}
+export { isApiConfigured }
 
 /**
  * Rejects the whole list if any entry fails validation, so callers keep the
