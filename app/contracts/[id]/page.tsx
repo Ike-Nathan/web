@@ -9,6 +9,8 @@ import { truncateId, explorerContractUrl, isValidUrl, mapFreighterNetwork } from
 import { formatDate, formatRelativeTime, formatRuleSummary, maskWebhookUrl } from '@/lib/format'
 import { useAnalytics } from '@/lib/useAnalytics'
 import { useNow } from '@/lib/useNow'
+import { formatDate, formatRuleSummary } from '@/lib/format'
+import { useAnalytics } from '@/lib/useAnalytics'
 import { useToast } from '@/components/ToastProvider'
 import NetworkBadge from '@/components/NetworkBadge'
 import NetworkEditField from '@/components/NetworkEditField'
@@ -116,6 +118,7 @@ export default function ContractDetailPage({ params }: { params: { id: string } 
     if (editedRules.length === 0) { setRulesError('Add at least one rule'); return }
     const updated = { ...contract!, rules: editedRules }
     const { saved, syncPromise } = syncSaveContract(updated, false)
+    const { saved, sync } = syncSaveContract(updated, false)
     if (!saved) {
       setRulesError('Could not save: browser storage is full or conflict occurred')
       return
@@ -125,6 +128,7 @@ export default function ContractDetailPage({ params }: { params: { id: string } 
     trackEvent('rule_edit_saved', { contractId: params.id, ruleCount: editedRules.length })
     
     const result = await syncPromise
+    const result = await sync
     if (!result.ok) showToast(result.error || 'API Sync Error', 'error')
   }
 
@@ -136,6 +140,11 @@ export default function ContractDetailPage({ params }: { params: { id: string } 
     setContract(updated)
 
     const result = await syncPromise
+    const { saved, sync } = syncSaveContract(updated, false)
+    if (!saved) return
+    setContract(updated)
+
+    const result = await sync
     if (!result.ok) showToast(result.error || 'API Sync Error', 'error')
   }
 
@@ -149,6 +158,11 @@ export default function ContractDetailPage({ params }: { params: { id: string } 
     trackEvent(updated.enabled ? 'contract_resumed' : 'contract_paused', { contractId: params.id })
 
     const result = await syncPromise
+    const { saved, sync } = syncSaveContract(updated, false)
+    if (!saved) return
+    setContract(updated)
+
+    const result = await sync
     if (!result.ok) showToast(result.error || 'API Sync Error', 'error')
   }
 
@@ -207,6 +221,7 @@ export default function ContractDetailPage({ params }: { params: { id: string } 
       network: editedNetwork
     }
     const { saved, syncPromise } = syncSaveContract(updated, false)
+    const { saved, sync } = syncSaveContract(updated, false)
     if (!saved) {
       setMetadataError('Could not save: browser storage is full or conflict occurred')
       return
@@ -222,6 +237,7 @@ export default function ContractDetailPage({ params }: { params: { id: string } 
     trackEvent('metadata_edit_saved', { contractId: params.id })
 
     const result = await syncPromise
+    const result = await sync
     if (!result.ok) showToast(result.error || 'API Sync Error', 'error')
   }
 
@@ -382,6 +398,8 @@ export default function ContractDetailPage({ params }: { params: { id: string } 
             <NetworkEditField
               currentNetwork={editedNetwork}
               onNetworkChange={setEditedNetwork}
+              value={editedNetwork}
+              onChange={setEditedNetwork}
             />
 
             {metadataError && (
@@ -534,6 +552,8 @@ export default function ContractDetailPage({ params }: { params: { id: string } 
               </div>
             )}
           </div>
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-semibold text-zinc-100">Alerts</h2>
           <NotificationToggle contractId={contract.contract_id} />
         </div>
         {alerts.length === 0 ? (
