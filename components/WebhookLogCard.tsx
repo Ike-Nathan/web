@@ -2,9 +2,9 @@
 
 import React, { useCallback, useState } from 'react';
 import { formatAmount } from '@/lib/formatAmount';
-import { truncateId } from '@/lib/format';
+import { truncateId } from '@/lib/stellar';
 import { formatDateTime } from '@/lib/format';
-import { explorerTxUrl } from '@/lib/explorer';
+import { explorerContractUrl, explorerTxUrl } from '@/lib/explorer';
 
 export interface WebhookEntry {
   id: string;
@@ -73,11 +73,10 @@ export function WebhookLogCard({ entry, network }: WebhookLogCardProps) {
     }
   }, [json]);
 
-  const explorerHref = entry.txHash
-    ? explorerTxUrl(entry.txHash, network)
-    : entry.contractAddress
-      ? `https://stellar.expert/explorer/${network ?? 'public'}/contract/${entry.contractAddress}`
-      : `https://stellar.expert/explorer/${network ?? 'public'}`;
+  const txHref = entry.txHash ? explorerTxUrl(network, entry.txHash) : null;
+  const explorerHref =
+    txHref ??
+    (entry.contractAddress ? explorerContractUrl(network, entry.contractAddress) : null);
 
   return (
     <>
@@ -125,16 +124,20 @@ export function WebhookLogCard({ entry, network }: WebhookLogCardProps) {
         {entry.txHash && (
           <div className="text-xs">
             <span className="text-muted-foreground">Tx: </span>
-            <a
-              href={explorerTxUrl(entry.txHash, network)}
-              target="_blank"
-              rel="noopener noreferrer"
-              onClick={(e) => e.stopPropagation()}
-              className="font-mono text-primary hover:underline break-all"
-              aria-label={`View transaction ${entry.txHash} on Stellar Explorer`}
-            >
-              {truncateId(entry.txHash)}
-            </a>
+            {txHref ? (
+              <a
+                href={txHref}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => e.stopPropagation()}
+                className="font-mono text-primary hover:underline break-all"
+                aria-label={`View transaction ${entry.txHash} on Stellar Explorer`}
+              >
+                {truncateId(entry.txHash)}
+              </a>
+            ) : (
+              <span className="font-mono break-all">{truncateId(entry.txHash)}</span>
+            )}
           </div>
         )}
       </article>
@@ -184,14 +187,16 @@ export function WebhookLogCard({ entry, network }: WebhookLogCardProps) {
               >
                 {copied ? 'Copied!' : 'Copy JSON'}
               </button>
-              <a
-                href={explorerHref}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="rounded-md border border-border px-3 py-1.5 text-xs font-medium text-primary hover:bg-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-              >
-                Open in explorer
-              </a>
+              {explorerHref && (
+                <a
+                  href={explorerHref}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="rounded-md border border-border px-3 py-1.5 text-xs font-medium text-primary hover:bg-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                >
+                  Open in explorer
+                </a>
+              )}
             </div>
           </div>
         </div>

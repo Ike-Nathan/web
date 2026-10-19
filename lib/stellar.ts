@@ -10,20 +10,11 @@ export {
   sorobanRpcUrl,
 } from './networkUrls.mjs'
 
-export const STELLAR_EXPERT_BASE = 'https://stellar.expert/explorer'
-
-export function explorerTxUrl(network: Network, txHash: string): string {
-  const net = network === 'mainnet' ? 'public' : network
-  return `${STELLAR_EXPERT_BASE}/${net}/tx/${txHash}`
-}
-
-export function explorerContractUrl(
-  network: Network,
-  contractId: string
-): string {
-  const net = network === 'mainnet' ? 'public' : network
-  return `${STELLAR_EXPERT_BASE}/${net}/contract/${contractId}`
-}
+export {
+  STELLAR_EXPERT_BASE,
+  explorerTxUrl,
+  explorerContractUrl,
+} from './explorer'
 
 /**
  * Maps Freighter network strings (e.g. PUBLIC, TESTNET, FUTURENET) to the app Network type (#8).
