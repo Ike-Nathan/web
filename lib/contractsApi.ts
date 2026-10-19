@@ -130,15 +130,33 @@ export async function listContracts(): Promise<WatchedContract[]> {
   })
 }
 
+/**
+ * Serialize a contract for the API payload. The full WatchedContract is sent,
+ * including `webhook_secret` when present, so the secret is persisted.
+ */
+function serializeContract(contract: WatchedContract): string {
+  const payload: WatchedContract = { ...contract }
+  if (payload.webhook_secret === undefined) {
+    delete payload.webhook_secret
+  }
+  return JSON.stringify(payload)
+}
+
+export function createContract(contract: WatchedContract): Promise<WatchedContract> {
 export function createContract(
   contract: WatchedContract
 ): Promise<WatchedContract> {
   return apiFetch<WatchedContract>('/contracts', {
     method: 'POST',
-    body: JSON.stringify(contract),
+    body: serializeContract(contract),
   })
 }
 
+export function updateContract(contract: WatchedContract): Promise<WatchedContract> {
+  return apiFetch<WatchedContract>(`/contracts/${encodeURIComponent(contract.id)}`, {
+    method: 'PUT',
+    body: serializeContract(contract),
+  })
 export function updateContract(
   contract: WatchedContract
 ): Promise<WatchedContract> {

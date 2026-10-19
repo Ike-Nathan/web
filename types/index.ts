@@ -81,6 +81,16 @@ export function parseAlertRule(value: unknown): AlertRule | null {
   }
 }
 
+/**
+ * Validates an untrusted webhook signing secret (e.g. from storage or an
+ * import file). Returns the trimmed secret, or undefined when absent/invalid.
+ */
+export function parseWebhookSecret(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined
+  const secret = value.trim()
+  return secret.length > 0 ? secret : undefined
+}
+
 export interface WatchedContract {
   id: string
   label: string
@@ -88,6 +98,8 @@ export interface WatchedContract {
   network: Network
   rules: AlertRule[]
   webhook_url: string
+  /** Optional signing secret used to sign webhook deliveries. */
+  webhook_secret?: string
   /** Whether this contract is actively watched. Absent = true. */
   enabled?: boolean
   created_at: number

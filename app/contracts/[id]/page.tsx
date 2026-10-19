@@ -4,6 +4,9 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { WatchedContract, AlertPayload, AlertRule, isRuleEnabled } from '@/types'
 import { syncSaveContract, syncDeleteContract } from '@/lib/contractSync'
+import { getContract, deleteContract, getAlerts, saveContract, seedMockAlerts } from '@/lib/storage'
+import { truncateId, explorerContractUrl, mapFreighterNetwork, validateWebhookUrl, generateWebhookSecret } from '@/lib/stellar'
+import { getContract, deleteContract, getAlerts, saveContract, seedMockAlerts, getContracts } from '@/lib/storage'
 import { getContract, getAlerts, getContractByIdAndNetwork, getContracts, deleteAlertsByNetwork } from '@/lib/storage'
 import { truncateId, explorerContractUrl, isValidUrl, mapFreighterNetwork } from '@/lib/stellar'
 import { formatDate, formatRelativeTime, formatRuleSummary, maskWebhookUrl } from '@/lib/format'
@@ -50,7 +53,9 @@ export default function ContractDetailPage({ params }: { params: { id: string } 
   const [editedLabel, setEditedLabel] = useState('')
   const [editedWebhookUrl, setEditedWebhookUrl] = useState('')
   const [editedNetwork, setEditedNetwork] = useState<WatchedContract['network']>('testnet')
+  const [editedWebhookSecret, setEditedWebhookSecret] = useState('')
   const [metadataError, setMetadataError] = useState<string | null>(null)
+  const [metadataWarning, setMetadataWarning] = useState<string | null>(null)
   const [editedLabelWarning, setEditedLabelWarning] = useState<string | null>(null)
 
   const sync = useAlertSync(contract?.contract_id, contract?.network, (fresh) => {
@@ -229,7 +234,9 @@ export default function ContractDetailPage({ params }: { params: { id: string } 
     setEditedLabel(contract!.label)
     setEditedWebhookUrl(contract!.webhook_url)
     setEditedNetwork(contract!.network)
+    setEditedWebhookSecret(contract!.webhook_secret ?? '')
     setMetadataError(null)
+    setMetadataWarning(null)
     setEditedLabelWarning(null)
     setShowEditMetadata(true)
     trackEvent('metadata_edit_opened', { contractId: params.id })
@@ -239,6 +246,33 @@ export default function ContractDetailPage({ params }: { params: { id: string } 
     const trimmedLabel = editedLabel.trim()
     const trimmedWebhookUrl = editedWebhookUrl.trim()
 
+    if (!trimmedLabel) {
+      setMetadataError('Label is required')
+      return
+    }
+
+    if (trimmedLabel.length > 100) {
+      setMetadataError('Label must be 100 characters or less')
+      return
+    }
+
+    if (!trimmedWebhookUrl) {
+      setMetadataError('Webhook URL is required')
+      return
+    }
+
+    const urlResult = validateWebhookUrl(trimmedWebhookUrl, editedNetwork)
+    if (urlResult.code === 'http_warning') {
+      setMetadataWarning(urlResult.message)
+      setMetadataError(null)
+    } else if (!urlResult.valid) {
+      setMetadataWarning(null)
+      setMetadataError(urlResult.message)
+      return
+    } else {
+      setMetadataWarning(null)
+      setMetadataError(null)
+    }
     if (!trimmedLabel) { setMetadataError('Label is required'); return }
     if (trimmedLabel.length > 100) { setMetadataError('Label must be 100 characters or less'); return }
     if (!trimmedWebhookUrl) { setMetadataError('Webhook URL is required'); return }
@@ -258,7 +292,8 @@ export default function ContractDetailPage({ params }: { params: { id: string } 
       ...contract!, 
       label: trimmedLabel,
       webhook_url: trimmedWebhookUrl,
-      network: editedNetwork
+      network: editedNetwork,
+      webhook_secret: editedWebhookSecret.trim() || undefined,
     }
     
     // Explicitly delete alerts for the old network before state is lost
@@ -289,7 +324,29 @@ export default function ContractDetailPage({ params }: { params: { id: string } 
   }
 
   function hasMetadataChanges(): boolean {
-    return editedLabel !== contract?.label || editedWebhookUrl !== contract?.webhook_url || editedNetwork !== contract?.network
+    return (
+      editedLabel !== contract?.label ||
+      editedWebhookUrl !== contract?.webhook_url ||
+      editedNetwork !== contract?.network ||
+      editedWebhookSecret !== (contract?.webhook_secret ?? '')
+    )
+  }
+
+  function generateSecret() {
+    setEditedWebhookSecret(generateWebhookSecret())
+  }
+
+  function rotateSecret() {
+    setEditedWebhookSecret(generateWebhookSecret())
+  }
+
+  async function copySecret() {
+    if (!editedWebhookSecret) return
+    try {
+      await navigator.clipboard.writeText(editedWebhookSecret)
+    } catch {
+      // Clipboard unavailable; ignore
+    }
   }
 
   function handleCancelMetadataEdit() {
@@ -479,6 +536,57 @@ export default function ContractDetailPage({ params }: { params: { id: string } 
               onChange={setEditedNetwork}
             />
           </div>
+          <div className="space-y-1">
+            <label htmlFor="edit-webhook-secret" className="block text-sm font-medium text-zinc-300">
+              Webhook Signing Secret
+            </label>
+            <div className="flex items-center gap-2">
+              <input
+                id="edit-webhook-secret"
+                type="password"
+                autoComplete="off"
+                value={editedWebhookSecret}
+                onChange={(e) => setEditedWebhookSecret(e.target.value)}
+                placeholder="No secret set"
+                className="flex-1 px-3 py-2 rounded-lg border border-zinc-700 bg-zinc-950 text-sm text-zinc-100 focus:outline-none focus:border-indigo-500"
+              />
+              <button
+                type="button"
+                onClick={generateSecret}
+                className="px-3 py-1.5 rounded-lg border border-zinc-700 hover:border-zinc-500 text-sm text-zinc-300 hover:text-zinc-100 transition-colors"
+              >
+                Generate
+              </button>
+              <button
+                type="button"
+                onClick={copySecret}
+                disabled={!editedWebhookSecret}
+                className="px-3 py-1.5 rounded-lg border border-zinc-700 hover:border-zinc-500 text-sm text-zinc-300 hover:text-zinc-100 transition-colors disabled:opacity-50"
+              >
+                Copy
+              </button>
+              <button
+                type="button"
+                onClick={rotateSecret}
+                className="px-3 py-1.5 rounded-lg border border-zinc-700 hover:border-zinc-500 text-sm text-zinc-300 hover:text-zinc-100 transition-colors"
+              >
+                Rotate
+              </button>
+            </div>
+          </div>
+          {metadataWarning && (
+            <div className="flex items-start justify-between gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-2.5 text-sm text-amber-300">
+              <span>{metadataWarning}</span>
+              <button
+                type="button"
+                onClick={() => setMetadataWarning(null)}
+                aria-label="Dismiss warning"
+                className="text-amber-400 hover:text-amber-200"
+              >
+                ×
+              </button>
+            </div>
+          )}
           <NetworkEditField
             currentNetwork={editedNetwork}
             onNetworkChange={setEditedNetwork}
@@ -652,6 +760,19 @@ export default function ContractDetailPage({ params }: { params: { id: string } 
         </div>
       </div>
 
+      {/* Webhook log */}
+      <WebhookLog contractId={contract.contract_id} webhookSecret={contract.webhook_secret} />
+
+      {/* Modals */}
+      {showEditRules && (
+        <RuleBuilder
+          rules={editedRules}
+          onChange={setEditedRules}
+          onSave={saveRules}
+          onCancel={handleCancelEdit}
+          error={rulesError}
+        />
+      )}
         <NotificationToggle />
       </div>
 
@@ -691,6 +812,101 @@ export default function ContractDetailPage({ params }: { params: { id: string } 
                   Sync now
                 </button>
               </div>
+              {metadataError && <p className="text-sm text-red-400">{metadataError}</p>}
+            </div>
+            <div className="flex justify-end gap-2">
+              <button
+      {/* Edit Details modal */}
+      {showEditMetadata && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <div className="w-full max-w-md rounded-xl border border-zinc-800 bg-zinc-900 p-6 space-y-4">
+            <h2 className="text-lg font-semibold text-zinc-100">Edit Details</h2>
+
+            <div className="space-y-1">
+              <label className="text-sm text-zinc-400">Label</label>
+              <input
+                value={editedLabel}
+                onChange={(e) => {
+                  const val = e.target.value
+                  setEditedLabel(val)
+                  const trimmed = val.trim().toLowerCase()
+                  if (trimmed && getContracts().some((c) => c.id !== contract?.id && c.label.trim().toLowerCase() === trimmed)) {
+                    setEditedLabelWarning('A contract with this label already exists')
+                  } else {
+                    setEditedLabelWarning(null)
+                  }
+                }}
+                className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100"
+              />
+              {editedLabelWarning && <p className="text-xs text-amber-400">{editedLabelWarning}</p>}
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-sm text-zinc-400">Webhook URL</label>
+              <input
+                value={editedWebhookUrl}
+                onChange={(e) => setEditedWebhookUrl(e.target.value)}
+                className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100"
+              />
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-sm text-zinc-400">Webhook Signing Secret</label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="password"
+                  autoComplete="off"
+                  value={editedWebhookSecret}
+                  onChange={(e) => setEditedWebhookSecret(e.target.value)}
+                  placeholder="No secret set"
+                  className="flex-1 rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100"
+                />
+                <button
+                  type="button"
+                  onClick={generateSecret}
+                  className="px-3 py-1.5 rounded-lg border border-zinc-700 text-sm text-zinc-300 hover:text-zinc-100 transition-colors"
+                >
+                  Generate
+                </button>
+                <button
+                  type="button"
+                  onClick={copySecret}
+                  disabled={!editedWebhookSecret}
+                  className="px-3 py-1.5 rounded-lg border border-zinc-700 text-sm text-zinc-300 hover:text-zinc-100 transition-colors disabled:opacity-50"
+                >
+                  Copy
+                </button>
+                <button
+                  type="button"
+                  onClick={rotateSecret}
+                  className="px-3 py-1.5 rounded-lg border border-zinc-700 text-sm text-zinc-300 hover:text-zinc-100 transition-colors"
+                >
+                  Rotate
+                </button>
+              </div>
+            </div>
+
+            <NetworkEditField
+              value={editedNetwork}
+              onChange={setEditedNetwork}
+            />
+
+            {metadataWarning && (
+              <div className="flex items-start justify-between gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-2.5 text-sm text-amber-300">
+                <span>{metadataWarning}</span>
+                <button
+                  type="button"
+                  onClick={() => setMetadataWarning(null)}
+                  aria-label="Dismiss warning"
+                  className="text-amber-400 hover:text-amber-200"
+                >
+                  ×
+                </button>
+              </div>
+            )}
+
+            {metadataError && (
+              <p className="text-sm text-red-400">{metadataError}</p>
             )}
           </div>
         <div className="flex items-center justify-between">
@@ -715,6 +931,7 @@ export default function ContractDetailPage({ params }: { params: { id: string } 
       </div>
 
       {/* Webhook Log */}
+      <WebhookLog contractId={contract.contract_id} webhookSecret={contract.webhook_secret} />
       <WebhookLog contractId={contract.contract_id} />
       
       {/* Modals continued */}

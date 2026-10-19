@@ -11,6 +11,14 @@
 const FORMULA_TRIGGERS = ['=', '+', '-', '@', '\t', '\r']
 
 /**
+ * Field names that must never be written to a CSV export.
+ *
+ * Webhook signing secrets are sensitive credentials; they are excluded from
+ * exports so that downloaded files cannot leak them.
+ */
+const EXCLUDED_FIELDS = ['webhook_secret', 'webhookSecret'];
+
+/**
  * Escape a single CSV cell value.
  *
  * - Embedded double quotes are doubled (" -> "").
@@ -48,4 +56,36 @@ export function buildCSV(
   }
 
   return lines.join('\r\n')
+}
+
+/**
+ * Build a CSV document from an array of records.
+ *
+ * The header row is derived from the keys of the first record. Any field
+ * listed in {@link EXCLUDED_FIELDS} (notably `webhook_secret`) is omitted
+ * from both the header and the data rows so signing secrets never appear in
+ * exported files.
+ *
+ * @param records   Records to serialize.
+ * @param delimiter Column separator, defaults to a comma.
+ */
+export function buildCSVFromRecords(
+  records: Record<string, unknown>[],
+  delimiter = ','
+): string {
+  const headers: string[] = [];
+
+  for (const record of records) {
+    for (const key of Object.keys(record)) {
+      if (!EXCLUDED_FIELDS.includes(key) && !headers.includes(key)) {
+        headers.push(key);
+      }
+    }
+  }
+
+  const rows = records.map((record) =>
+    headers.map((header) => record[header])
+  );
+
+  return buildCSV(headers, rows, delimiter);
 }

@@ -181,6 +181,53 @@ export function isValidUrl(url: string): boolean {
   }
 }
 
+/** #117: Codes returned by validateWebhookUrl. */
+export type WebhookUrlErrorCode =
+  | 'invalid_url'
+  | 'credentials_in_url'
+  | 'http_on_mainnet'
+  | 'http_warning'
+  | 'loopback_not_allowed'
+  | 'private_ip_not_allowed'
+  | 'link_local_not_allowed'
+
+export interface WebhookUrlValidationResult {
+  /** True when the URL may be submitted (http_warning is still valid). */
+  valid: boolean
+  /** Error code, or null when there is nothing to report. */
+  code: WebhookUrlErrorCode | null
+  /** True when the code is a dismissible warning rather than a blocking error. */
+  warning: boolean
+  /** User-facing message for the code, or null when there is nothing to report. */
+  message: string | null
+}
+
+/** User-facing messages for each webhook URL validation code. */
+export const WEBHOOK_URL_MESSAGES: Record<WebhookUrlErrorCode, string> = {
+  invalid_url: 'Enter a valid URL starting with http:// or https://.',
+  credentials_in_url: 'Remove the username and password from the URL.',
+  http_on_mainnet: 'Plain http:// webhooks are not allowed on mainnet. Use https://.',
+  http_warning: 'This webhook uses plain http://. Use https:// in production.',
+  loopback_not_allowed: 'Loopback addresses (localhost, 127.0.0.1, ::1) are not allowed.',
+  private_ip_not_allowed: 'Private IP addresses are not allowed.',
+  link_local_not_allowed: 'Link-local addresses are not allowed.',
+}
+
+/** Maps a validation code to its user-facing message. */
+export function webhookUrlMessage(code: WebhookUrlErrorCode | null): string | null {
+  return code ? WEBHOOK_URL_MESSAGES[code] : null
+}
+
+/** #117: Validate webhook URLs with security checks. */
+export function validateWebhookUrl(url: string, network: Network): WebhookUrlValidationResult {
+  const result = (code: WebhookUrlErrorCode | null): WebhookUrlValidationResult => ({
+    valid: code === null || code === 'http_warning',
+    code,
+    warning: code === 'http_warning',
+    message: webhookUrlMessage(code),
+  })
+
+  if (!isValidUrl(url)) return result('invalid_url')
 /** #117: Validate webhook URLs with security checks. Returns error/warning code or null if valid. */
 export function validateWebhookUrl(
   url: string,
@@ -192,9 +239,22 @@ export function validateWebhookUrl(
     const u = new URL(url)
 
     // Reject URLs with embedded credentials
-    if (u.username || u.password) return 'credentials_in_url'
+    if (u.username || u.password) return result('credentials_in_url')
 
     // Warn on plain http (block for mainnet)
+    if (u.protocol === 'http:') return result(network === 'mainnet' ? 'http_on_mainnet' : 'http_warning')
+
+    // Reject localhost and private IP ranges
+    const hostname = u.hostname || ''
+    if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]') {
+      return result('loopback_not_allowed')
+    }
+
+    // Reject private IP ranges (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, fe80::/10)
+    if (/^(10|172\.(1[6-9]|2[0-9]|3[01])|192\.168)\./.test(hostname) ||
+        hostname.startsWith('fc') || hostname.startsWith('fd') ||
+        hostname.startsWith('fe80')) {
+      return result('private_ip_not_allowed')
     if (u.protocol === 'http:')
       return network === 'mainnet' ? 'http_on_mainnet' : 'http_warning'
 
@@ -219,10 +279,10 @@ export function validateWebhookUrl(
     }
 
     // Reject link-local addresses (169.254.0.0/16, fe80::/10)
-    if (/^169\.254\./.test(hostname)) return 'link_local_not_allowed'
+    if (/^169\.254\./.test(hostname)) return result('link_local_not_allowed')
 
-    return null
+    return result(null)
   } catch {
-    return 'invalid_url'
+    return result('invalid_url')
   }
 }

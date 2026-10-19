@@ -124,6 +124,64 @@ export interface TestWebhookResult {
   durationMs?: number
 }
 
+export interface TestWebhookPayloadOptions {
+  rule?: AlertRule | AlertRuleType | string
+  function_name?: string
+  amount?: string | number
+  transaction_hash?: string
+  is_test?: boolean
+}
+
+/**
+ * Builds a dynamic, rule-aware test webhook payload (#24).
+ * Replaces hardcoded values with realistic 64-hex dummy hashes,
+ * valid Horizon explorer links, and rule-matching attributes.
+ */
+export function buildTestWebhookPayload(
+  contractId: string,
+  network: Network = 'testnet',
+  options?: TestWebhookPayloadOptions
+) {
+  const dummyHash =
+    options?.transaction_hash ||
+    '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
+
+  let ruleType = 'AnyTransaction'
+  let functionName: string | undefined = options?.function_name
+  let amount: string | number | undefined = options?.amount
+
+  if (typeof options?.rule === 'string') {
+    ruleType = options.rule
+  } else if (options?.rule && typeof options.rule === 'object') {
+    ruleType = options.rule.rule_type
+    if (options.rule.rule_type === 'FunctionCalled') {
+      functionName = options.rule.function_name || functionName || 'transfer'
+    } else if (options.rule.rule_type === 'LargeTransfer') {
+      amount = options.rule.min_amount || amount || '1000'
+    }
+  }
+
+  const payload: Record<string, any> = {
+    label: 'Test Alert',
+    contract_id: contractId,
+    network,
+    rule_triggered: ruleType,
+    transaction_hash: dummyHash,
+    timestamp: Date.now(),
+    horizon_link: `${horizonUrl(network)}/transactions/${dummyHash}`,
+    is_test: true,
+  }
+
+  if (functionName) {
+    payload.function_name = functionName
+  }
+  if (amount !== undefined) {
+    payload.amount = amount
+  }
+
+  return payload
+}
+
 /**
  * Syntactically valid but non-existent transaction hash (64 lowercase hex
  * chars) used for simulated alerts, so receivers that parse the hash do not
@@ -145,7 +203,7 @@ export function describeRule(rule: AlertRule): string {
   }
 }
 
-export interface TestWebhookPayloadOptions {
+export interface BuildTestWebhookPayloadOptions {
   contractId: string
   network?: Network
   /** Configured rule to simulate. Defaults to `AnyTransaction`. */
@@ -173,7 +231,7 @@ export function buildTestWebhookPayload({
   label = 'Test Alert',
   timestamp = Date.now(),
   transactionHash = TEST_TX_HASH,
-}: TestWebhookPayloadOptions): AlertPayload {
+}: BuildTestWebhookPayloadOptions): AlertPayload {
   const payload: AlertPayload = {
     label,
     contract_id: contractId,
@@ -206,6 +264,11 @@ export function buildTestWebhookPayload({
 interface SendTestWebhookTransport {
   /** Caller-owned signal, or a timeout in milliseconds (default 10000). */
   signalOrTimeoutMs?: AbortSignal | number
+  /**
+   * Signing secret for the delivery. When provided (e.g. the stored
+   * `webhook_secret` of a watched contract), the request body is signed with
+   * HMAC-SHA256 and the signature is sent in the `SIGNATURE_HEADER` header.
+   */
   secret?: string
 }
 
@@ -213,7 +276,7 @@ export type SendTestWebhookOptions = SendTestWebhookTransport &
   /** Send a pre-built payload verbatim, e.g. the one shown in a preview. */
   (
     | { payload: AlertPayload }
-    | ({ payload?: undefined } & TestWebhookPayloadOptions)
+    | ({ payload?: undefined } & BuildTestWebhookPayloadOptions)
   )
 
 export async function sendTestWebhook(
