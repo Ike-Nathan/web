@@ -1,5 +1,6 @@
 import type { WatchedContract } from '@/types'
 import {
+  getContract,
   getContracts,
   saveContract,
   deleteContract,
@@ -13,9 +14,13 @@ import {
   updateContract,
   removeContract,
 } from '@/lib/contractsApi'
-import { SYNC_STATUS_KEY } from '@/lib/storageKeys'
+import {
+  CONTRACTS_KEY,
+  SYNC_QUEUE_KEY,
+  SYNC_STATUS_KEY,
+} from '@/lib/storageKeys'
 
-type SyncState = 'synced' | 'error'
+export type SyncState = 'synced' | 'error'
 export interface SyncStatus {
   state: SyncState
   error?: string
@@ -25,16 +30,14 @@ export interface SyncStatus {
 /** Storage key used by the local contract cache; storage events on it signal cross-tab changes. */
 export const CONTRACTS_STORAGE_KEY = CONTRACTS_KEY
 
-/** Custom event to notify same-tab listeners when the sync status dictionary changes. */
-const SYNC_STATUS_EVENT = 'txwatch:sync_status'
-
 /**
  * Re-exported from the storage layer so callers get a subscription that fires
  * for both same-tab and cross-tab contract cache writes.
  */
-export const CONTRACTS_STORAGE_KEY = CONTRACTS_KEY
-
 export { onContractsChange }
+
+/** Fired on window whenever a contract's sync status changes. */
+export const SYNC_STATUS_EVENT = 'txwatch:sync-status'
 
 export function getSyncStatuses(): Record<string, SyncStatus> {
   try {
@@ -50,12 +53,50 @@ function setStatus(id: string, status: SyncStatus | null) {
     if (status) all[id] = status
     else delete all[id]
     localStorage.setItem(SYNC_STATUS_KEY, JSON.stringify(all))
-    if (typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent(SYNC_STATUS_EVENT))
-    }
+    if (typeof window !== 'undefined')
+      window.dispatchEvent(new Event(SYNC_STATUS_EVENT))
   } catch {
     // status is best-effort
   }
+}
+
+/** Automatic retries stop after this many failed attempts; a manual retry starts over. */
+export const SYNC_MAX_ATTEMPTS = 5
+export const SYNC_RETRY_BASE_MS = 5000
+export const SYNC_RETRY_MAX_MS = 5 * 60 * 1000
+
+/** A create/update that failed and is waiting to be replayed (#253). */
+export interface PendingSync {
+  op: 'create' | 'update'
+  contract: WatchedContract
+  attempts: number
+  nextAttemptAt: number
+}
+
+export function getSyncQueue(): Record<string, PendingSync> {
+  try {
+    return JSON.parse(localStorage.getItem(SYNC_QUEUE_KEY) ?? '{}')
+  } catch {
+    return {}
+  }
+}
+
+function updateQueue(mutate: (queue: Record<string, PendingSync>) => void) {
+  try {
+    const queue = getSyncQueue()
+    mutate(queue)
+    localStorage.setItem(SYNC_QUEUE_KEY, JSON.stringify(queue))
+  } catch {
+    // queue is best-effort
+  }
+}
+
+/** Exponential backoff: 5s, 10s, 20s, ... capped at 5 minutes. */
+export function syncRetryDelay(attempts: number): number {
+  return Math.min(
+    SYNC_RETRY_BASE_MS * 2 ** Math.max(0, attempts - 1),
+    SYNC_RETRY_MAX_MS
+  )
 }
 
 /** Subscribe to both same-tab and cross-tab sync status updates. */
@@ -85,73 +126,141 @@ export interface SyncResult {
   error?: string
 }
 
-export function syncSaveContract(contract: WatchedContract, isNew: boolean): { saved: boolean, syncPromise: Promise<SyncResult> } {
+const inFlight = new Set<string>()
+
+/**
+ * Push one contract to the API. On failure the operation is queued with
+ * backoff; on success any queued operation for the same contract version is
+ * cleared.
+ */
+async function pushContract(
+  op: PendingSync['op'],
+  contract: WatchedContract,
+  priorAttempts: number
+): Promise<SyncResult> {
+  // What is queued now is superseded by this push; anything queued while it
+  // is in flight is newer and must be kept.
+  const queuedBefore = JSON.stringify(getSyncQueue()[contract.id]?.contract)
+  inFlight.add(contract.id)
+  try {
+    await (op === 'create'
+      ? createContract(contract)
+      : updateContract(contract))
+    updateQueue((queue) => {
+      if (
+        queue[contract.id] &&
+        JSON.stringify(queue[contract.id].contract) === queuedBefore
+      ) {
+        delete queue[contract.id]
+      }
+    })
+    setStatus(contract.id, { state: 'synced', at: Date.now() })
+    return { ok: true }
+  } catch (e) {
+    const attempts = priorAttempts + 1
+    updateQueue((queue) => {
+      queue[contract.id] = {
+        op,
+        contract,
+        attempts,
+        nextAttemptAt: Date.now() + syncRetryDelay(attempts),
+      }
+    })
+    const error = errMsg(e)
+    setStatus(contract.id, {
+      state: 'error',
+      error:
+        attempts >= SYNC_MAX_ATTEMPTS
+          ? `${error} (gave up after ${attempts} attempts)`
+          : error,
+      at: Date.now(),
+    })
+    return { ok: false, error }
+  } finally {
+    inFlight.delete(contract.id)
+  }
+}
+
 /** Save locally (cache) and push to the API when configured. Never throws. */
-export async function syncSaveContract(contract: WatchedContract, isNew: boolean): Promise<SyncResult> {
+export async function syncSaveContract(
+  contract: WatchedContract,
+  isNew: boolean
+): Promise<SyncResult> {
   const localSaved = saveContract(contract)
   if (!localSaved) {
     return { ok: false, localSaved: false, error: 'Storage full' }
   }
   if (!isApiConfigured()) return { ok: true, localSaved: true }
-  try {
-    await (isNew ? createContract(contract) : updateContract(contract))
-    setStatus(contract.id, { state: 'synced', at: Date.now() })
-    return { ok: true, localSaved: true }
-  } catch (e) {
-    const error = errMsg(e)
-    setStatus(contract.id, { state: 'error', error, at: Date.now() })
-    return { ok: false, localSaved: true, error }
-export async function syncSaveContract(
-  contract: WatchedContract,
-  isNew: boolean
-): Promise<SyncResult> {
-  saveContract(contract)
-  if (!isApiConfigured()) return { ok: true }
-export function syncSaveContract(contract: WatchedContract, isNew: boolean): { saved: boolean, sync: Promise<SyncResult> } {
-  let saved = false;
-  try {
-    saved = saveContract(contract)
-  } catch (err) {
-    return { saved: false, syncPromise: Promise.resolve({ ok: false, error: errMsg(err) }) }
-  }
+  // A create that never reached the API must still be sent as a create.
+  const op =
+    isNew || getSyncQueue()[contract.id]?.op === 'create' ? 'create' : 'update'
+  return { ...(await pushContract(op, contract, 0)), localSaved: true }
+}
 
-  if (!saved) {
-    return { saved: false, syncPromise: Promise.resolve({ ok: false, error: 'Storage full or unavailable' }) }
-  }
-
-  const syncPromise = (async () => {
-    return { saved: false, sync: Promise.resolve({ ok: false, error: errMsg(err) }) }
-  }
-
-  if (!saved) {
-    return { saved: false, sync: Promise.resolve({ ok: false, error: 'Storage full or unavailable' }) }
-  }
-
-  const sync = (async () => {
-    if (!isApiConfigured()) return { ok: true }
-    try {
-      await (isNew ? createContract(contract) : updateContract(contract))
-      setStatus(contract.id, { state: 'synced', at: Date.now() })
-      return { ok: true }
-    } catch (e) {
-      const error = errMsg(e)
-      setStatus(contract.id, { state: 'error', error, at: Date.now() })
-      return { ok: false, error }
+/**
+ * Replay queued operations whose backoff has elapsed. `ignoreBackoff`
+ * (used when the browser comes back online) retries them right away; entries
+ * that hit SYNC_MAX_ATTEMPTS are left for a manual retry.
+ */
+export async function retryPendingSyncs({
+  ignoreBackoff = false,
+} = {}): Promise<void> {
+  if (!isApiConfigured()) return
+  const now = Date.now()
+  for (const [id, entry] of Object.entries(getSyncQueue())) {
+    if (inFlight.has(id) || entry.attempts >= SYNC_MAX_ATTEMPTS) continue
+    if (!ignoreBackoff && entry.nextAttemptAt > now) continue
+    if (!getContract(id)) {
+      updateQueue((queue) => {
+        delete queue[id]
+      })
+      continue
     }
-  })()
+    await pushContract(entry.op, entry.contract, entry.attempts)
+  }
+}
 
-  return { saved, syncPromise }
-  return { saved, sync }
+/** Manual retry from the card: retries now and restarts the attempt count. */
+export async function retryContractSync(id: string): Promise<SyncResult> {
+  if (!isApiConfigured()) return { ok: true }
+  if (inFlight.has(id)) return { ok: false, error: 'Sync already in progress' }
+  const entry = getSyncQueue()[id]
+  const contract = getContract(id) ?? entry?.contract
+  if (!contract) return { ok: false, error: 'Contract not found' }
+  return pushContract(entry?.op ?? 'update', contract, 0)
+}
+
+/**
+ * Replay the queue on load, when the browser comes back online, and
+ * periodically while backoff timers elapse. Returns a stop function.
+ */
+export function startSyncRetries(): () => void {
+  const run = (opts?: { ignoreBackoff?: boolean }) => {
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) return
+    void retryPendingSyncs(opts)
+  }
+  const onOnline = () => run({ ignoreBackoff: true })
+  run()
+  const timer = setInterval(run, SYNC_RETRY_BASE_MS)
+  window.addEventListener('online', onOnline)
+  return () => {
+    clearInterval(timer)
+    window.removeEventListener('online', onOnline)
+  }
 }
 
 export async function syncDeleteContract(id: string): Promise<SyncResult> {
   deleteContract(id)
   setStatus(id, null)
+  updateQueue((queue) => {
+    delete queue[id]
+  })
   if (!isApiConfigured()) return { ok: true }
   try {
     await removeContract(id)
     return { ok: true }
   } catch (e) {
+    // Local delete already happened; the next refresh restores it if the API still has it.
     return { ok: false, error: errMsg(e) }
   }
 }
@@ -167,7 +276,6 @@ export async function refreshContracts(): Promise<{
   contracts: WatchedContract[]
   error?: string
 }> {
-export async function refreshContracts(): Promise<{ contracts: WatchedContract[]; error?: string }> {
   if (!isApiConfigured()) return { contracts: getContracts() }
   try {
     const remote = await listContracts()

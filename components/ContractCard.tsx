@@ -1,7 +1,12 @@
 import Link from 'next/link'
-import { useEffect, useRef } from 'react'
+import { useEffect, useReducer, useRef, useState } from 'react'
 import { WatchedContract, isRuleEnabled } from '@/types'
 import NetworkBadge from './NetworkBadge'
+import {
+  SYNC_STATUS_EVENT,
+  getSyncStatuses,
+  retryContractSync,
+} from '@/lib/contractSync'
 import { truncateId } from '@/lib/stellar'
 import { formatDate, formatRelativeTime } from '@/lib/format'
 import { useNow } from '@/lib/useNow'
@@ -27,18 +32,35 @@ export default function ContractCard({
   syncStatus,
 }: ContractCardProps) {
   const hasWebhook = Boolean(contract.webhook_url)
+  const sync = syncStatus ?? getSyncStatuses()[contract.id]
+  const [, refresh] = useReducer((n: number) => n + 1, 0)
+  const [retrying, setRetrying] = useState(false)
   const ref = useRef<HTMLAnchorElement>(null)
-  
+
   const paused = contract.enabled === false
   const activeRulesCount = contract.rules.filter(isRuleEnabled).length
   const totalRules = contract.rules.length
-  
+
   const now = useNow(60_000)
 
   useEffect(() => {
     if (!highlight) return
     ref.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
   }, [highlight])
+
+  useEffect(() => {
+    window.addEventListener(SYNC_STATUS_EVENT, refresh)
+    return () => window.removeEventListener(SYNC_STATUS_EVENT, refresh)
+  }, [])
+
+  const handleRetry = async (e: React.MouseEvent) => {
+    // The card itself is a link / selection target.
+    e.preventDefault()
+    e.stopPropagation()
+    setRetrying(true)
+    await retryContractSync(contract.id)
+    setRetrying(false)
+  }
 
   const cardClassName = `block bg-zinc-900 border rounded-xl p-5 transition-all group ${
     selected
@@ -77,18 +99,45 @@ export default function ContractCard({
           )}
           <NetworkBadge network={contract.network} />
         </div>
-        {syncStatus && (
-          <span className={syncStatus.state === 'error' ? 'text-xs text-red-400' : 'text-xs text-emerald-400'} title={syncStatus.error}>
-            {syncStatus.state === 'error' ? 'Sync failed' : 'Synced'}
+        {sync && (
+          <span
+            className={
+              sync.state === 'error'
+                ? 'text-xs text-red-400'
+                : 'text-xs text-emerald-400'
+            }
+            title={sync.error}
+          >
+            {sync.state === 'error' ? 'Sync failed' : 'Synced'}
           </span>
+        )}
+        {sync?.state === 'error' && (
+          <button
+            type="button"
+            onClick={handleRetry}
+            disabled={retrying}
+            className="text-xs text-indigo-400 hover:text-indigo-300 disabled:opacity-50"
+          >
+            {retrying ? 'Retrying…' : 'Retry'}
+          </button>
         )}
       </div>
 
       {/* Webhook status indicator */}
       {!hasWebhook && (
         <div className="mb-3 flex items-center gap-1.5 text-xs px-2 py-1 rounded-md bg-amber-500/15 text-amber-400 border border-amber-500/20">
-          <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          <svg
+            className="w-3.5 h-3.5 flex-shrink-0"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+            />
           </svg>
           <span>No webhook configured</span>
         </div>
@@ -99,9 +148,17 @@ export default function ContractCard({
           {paused ? (
             <span className="text-zinc-400">Monitoring paused</span>
           ) : activeRulesCount !== totalRules ? (
-            <span><span className="text-zinc-300 font-medium">{activeRulesCount}</span> of {totalRules} rules on</span>
+            <span>
+              <span className="text-zinc-300 font-medium">
+                {activeRulesCount}
+              </span>{' '}
+              of {totalRules} rules on
+            </span>
           ) : (
-            <span><span className="text-zinc-300 font-medium">{totalRules}</span> {totalRules === 1 ? 'rule' : 'rules'} active</span>
+            <span>
+              <span className="text-zinc-300 font-medium">{totalRules}</span>{' '}
+              {totalRules === 1 ? 'rule' : 'rules'} active
+            </span>
           )}
         </span>
         {lastAlertTime ? (
@@ -141,7 +198,11 @@ export default function ContractCard({
   }
 
   return (
-    <Link href={`/contracts/${contract.id}`} className={cardClassName} ref={ref}>
+    <Link
+      href={`/contracts/${contract.id}`}
+      className={cardClassName}
+      ref={ref}
+    >
       {body}
     </Link>
   )

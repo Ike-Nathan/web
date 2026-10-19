@@ -14,13 +14,16 @@ export const CONTRACTS_KEY = 'txwatch_contracts'
 export const ALERTS_KEY = 'txwatch_alerts'
 
 /** User preferences. */
-const PREFS_KEY = 'txwatch_prefs'
+export const PREFS_KEY = 'txwatch_prefs'
 
 /** Last contract sync status. */
 export const SYNC_STATUS_KEY = 'txwatch_sync_status'
 
+/** Contract create/update operations waiting to be retried against the API. */
+export const SYNC_QUEUE_KEY = 'txwatch_sync_queue'
+
 /** Number of days to retain alerts. */
-const ALERT_RETENTION_DAYS_KEY = 'txwatch_alert_retention_days'
+export const ALERT_RETENTION_DAYS_KEY = 'txwatch_alert_retention_days'
 
 /**
  * Whether notifications are enabled.
@@ -40,10 +43,10 @@ export const FREIGHTER_PUBLIC_KEY = 'txwatch_freighter_public_key'
 export const STORAGE_VERSION_KEY = 'txwatch_storage_version'
 
 /** Session key: last contract created by the user. */
-const LAST_CREATED_CONTRACT_KEY = 'txwatch_last_created_contract'
+export const LAST_CREATED_CONTRACT_KEY = 'txwatch_last_created_contract'
 
 /** Session key: contract flagged as a duplicate. */
-const DUPLICATE_CONTRACT_KEY = 'txwatch_duplicate_contract'
+export const DUPLICATE_CONTRACT_KEY = 'txwatch_duplicate_contract'
 
 /**
  * Frozen list of every storage key managed by the application.
@@ -56,6 +59,7 @@ export const TXWATCH_KEYS = Object.freeze([
   ALERTS_KEY,
   PREFS_KEY,
   SYNC_STATUS_KEY,
+  SYNC_QUEUE_KEY,
   ALERT_RETENTION_DAYS_KEY,
   NOTIFICATIONS_KEY,
   FREIGHTER_PUBLIC_KEY,

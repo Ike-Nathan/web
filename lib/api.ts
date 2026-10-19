@@ -124,64 +124,6 @@ export interface TestWebhookResult {
   durationMs?: number
 }
 
-export interface TestWebhookPayloadOptions {
-  rule?: AlertRule | AlertRuleType | string
-  function_name?: string
-  amount?: string | number
-  transaction_hash?: string
-  is_test?: boolean
-}
-
-/**
- * Builds a dynamic, rule-aware test webhook payload (#24).
- * Replaces hardcoded values with realistic 64-hex dummy hashes,
- * valid Horizon explorer links, and rule-matching attributes.
- */
-export function buildTestWebhookPayload(
-  contractId: string,
-  network: Network = 'testnet',
-  options?: TestWebhookPayloadOptions
-) {
-  const dummyHash =
-    options?.transaction_hash ||
-    '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
-
-  let ruleType = 'AnyTransaction'
-  let functionName: string | undefined = options?.function_name
-  let amount: string | number | undefined = options?.amount
-
-  if (typeof options?.rule === 'string') {
-    ruleType = options.rule
-  } else if (options?.rule && typeof options.rule === 'object') {
-    ruleType = options.rule.rule_type
-    if (options.rule.rule_type === 'FunctionCalled') {
-      functionName = options.rule.function_name || functionName || 'transfer'
-    } else if (options.rule.rule_type === 'LargeTransfer') {
-      amount = options.rule.min_amount || amount || '1000'
-    }
-  }
-
-  const payload: Record<string, any> = {
-    label: 'Test Alert',
-    contract_id: contractId,
-    network,
-    rule_triggered: ruleType,
-    transaction_hash: dummyHash,
-    timestamp: Date.now(),
-    horizon_link: `${horizonUrl(network)}/transactions/${dummyHash}`,
-    is_test: true,
-  }
-
-  if (functionName) {
-    payload.function_name = functionName
-  }
-  if (amount !== undefined) {
-    payload.amount = amount
-  }
-
-  return payload
-}
-
 /**
  * Syntactically valid but non-existent transaction hash (64 lowercase hex
  * chars) used for simulated alerts, so receivers that parse the hash do not
@@ -259,6 +201,32 @@ export function buildTestWebhookPayload({
   }
 
   return payload
+}
+
+/**
+ * The rule a test payload simulates, recovered from its rule-specific fields,
+ * so the proxy can rebuild the same payload server-side (#261).
+ */
+export function ruleFromPayload(payload: AlertPayload): AlertRule | undefined {
+  switch (payload.rule_triggered) {
+    case 'LargeTransfer':
+      return { type: 'LargeTransfer', threshold_xlm: payload.amount ?? 0 }
+    case 'FunctionCalled':
+      return {
+        type: 'FunctionCalled',
+        function_name: payload.function_name ?? '',
+      }
+    case 'AdminFunctionCalled':
+      return {
+        type: 'AdminFunctionCalled',
+        function_names: [payload.function_name ?? ''],
+      }
+    case 'AnyTransaction':
+    case 'TransactionFailed':
+      return { type: payload.rule_triggered }
+    default:
+      return undefined
+  }
 }
 
 interface SendTestWebhookTransport {
@@ -350,7 +318,14 @@ export async function sendTestWebhook(
       res = await fetch('/api/test-webhook', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: webhookUrl, payload, secret }),
+        // The proxy builds the payload itself from these fields.
+        body: JSON.stringify({
+          url: webhookUrl,
+          contractId: payload.contract_id,
+          network: payload.network,
+          rule: ruleFromPayload(payload),
+          secret,
+        }),
         signal,
       })
     } else {
