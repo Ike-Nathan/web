@@ -29,9 +29,10 @@ const rangePresets: { value: DateRange; label: string }[] = [
   { value: 'custom', label: 'Custom' },
 ]
 
-interface WebhookLogProps {
+export interface WebhookLogProps {
   alerts: AlertPayload[]
   network: Network
+  contractLabel?: string
 }
 
 const ruleTypes: AlertRuleType[] = [
@@ -63,28 +64,32 @@ function toWebhookEntry(alert: AlertPayload): WebhookEntry {
   }
 }
 
-function exportCSV(alerts: AlertPayload[]) {
-  const rows = [
-    ['Time', 'Rule', 'Tx Hash', 'Function', 'Amount'],
-    ...alerts.map((a) => [
-      new Date(a.timestamp).toLocaleString(),
-      a.rule_triggered,
-      a.transaction_hash,
-      a.function_name ?? 'N/A',
-      a.amount !== undefined ? `${a.amount} XLM` : 'N/A',
-    ]),
-  ]
-  const csv = buildCSV(rows)
+export function exportCSV(alerts: AlertPayload[], contractLabel?: string, network?: string) {
+  const headers = ['Time', 'Rule', 'Tx Hash', 'Function', 'Amount']
+  const rows = alerts.map((a) => [
+    new Date(a.timestamp).toISOString(),
+    a.rule_triggered,
+    a.transaction_hash,
+    a.function_name ?? 'N/A',
+    a.amount !== undefined ? formatAmount(a.amount) : 'N/A',
+  ])
+  const csv = buildCSV(headers, rows)
   const blob = new Blob([csv], { type: 'text/csv' })
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
-  a.download = 'alerts.csv'
+  const labelSlug = (contractLabel ?? alerts[0]?.label ?? 'alerts')
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]/g, '_')
+  const net = network ?? alerts[0]?.network ?? 'network'
+  a.download = `alerts-${labelSlug}-${net}.csv`
   a.click()
-  URL.revokeObjectURL(url)
+  setTimeout(() => {
+    URL.revokeObjectURL(url)
+  }, 1000)
 }
 
-export default function WebhookLog({ alerts, network }: WebhookLogProps) {
+export default function WebhookLog({ alerts, network, contractLabel }: WebhookLogProps) {
   const [selectedFilter, setSelectedFilter] = useState<AlertRuleType | null>(null)
   const [selectedAlert, setSelectedAlert] = useState<AlertPayload | null>(null)
 
@@ -238,7 +243,7 @@ export default function WebhookLog({ alerts, network }: WebhookLogProps) {
           <div className="flex items-center gap-4">
             <SortToggle direction={sortDirection} onToggle={toggleSort} />
             <button
-              onClick={() => exportCSV(sortedEntries)}
+              onClick={() => exportCSV(sortedEntries, contractLabel, network)}
               className="text-xs text-zinc-400 hover:text-zinc-200 transition-colors"
             >
               Export CSV
@@ -271,7 +276,7 @@ export default function WebhookLog({ alerts, network }: WebhookLogProps) {
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-800/50">
-                {filteredAlerts.map((alert, i) => (
+                {pageAlerts.map((alert, i) => (
                   <tr
                     key={i}
                     onClick={() => setSelectedAlert(alert)}
@@ -315,7 +320,7 @@ export default function WebhookLog({ alerts, network }: WebhookLogProps) {
                       {alert.function_name ?? 'N/A'}
                     </td>
                     <td className="py-3 text-zinc-400">
-                      {alert.amount !== undefined ? `${formatAmount(alert.amount)} XLM` : 'N/A'}
+                      {alert.amount !== undefined ? formatAmount(alert.amount) : 'N/A'}
                     </td>
                   </tr>
                 ))}
