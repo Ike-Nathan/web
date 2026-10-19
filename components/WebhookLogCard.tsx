@@ -139,6 +139,7 @@ export function WebhookLogCard({ alert, entry, network = 'mainnet', onClick }: W
           <div className="text-xs">
             <span className="text-muted-foreground">Amount: </span>
             <span className="font-medium text-foreground">
+              {formatAmount(entry.amount)}
               {formatAmount(data.amount)} {data.asset ?? ''}
             </span>
           </div>

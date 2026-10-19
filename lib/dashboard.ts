@@ -1,3 +1,6 @@
+import { WatchedContract } from '@/types'
+import { hasActiveWebhooks } from '@/lib/contractsApi'
+
 import { AlertPayload, Network, WatchedContract } from '@/types'
 import { hasActiveWebhooks } from '@/lib/contractsApi'
 
@@ -147,6 +150,11 @@ export function isContractPaused(contract: { enabled?: boolean; paused?: boolean
 }
 
 /**
+ * Counts active webhooks across watched contracts.
+ * Uses the canonical WatchedContract type from @/types.
+ */
+export function countActiveWebhooks(contracts: WatchedContract[]): number {
+  return contracts.filter(hasActiveWebhooks).length
  * Unifies definition of active webhooks across the application:
  * contract must be enabled and have a non-empty webhook URL.
  */

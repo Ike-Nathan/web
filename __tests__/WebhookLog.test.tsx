@@ -93,7 +93,8 @@ describe('WebhookLog', () => {
 
   it('shows formatted amount when present', () => {
     render(<WebhookLog alerts={[{ ...baseAlert, amount: 100 }]} network="testnet" />)
-    expect(screen.getByText('100 XLM')).toBeInTheDocument()
+    expect(screen.getByText('100.0000000 XLM')).toBeInTheDocument()
+    expect(screen.queryByText(/XLM XLM/)).not.toBeInTheDocument()
   })
 
   it('shows export CSV button', () => {
@@ -159,4 +160,72 @@ describe('WebhookLog', () => {
     expect(setIntervalSpy).not.toHaveBeenCalled()
     setIntervalSpy.mockRestore()
   })
+
+  describe('desktop table pagination (issue #230)', () => {
+    it('renders pageAlerts and navigates between pages', () => {
+      const manyAlerts: AlertPayload[] = Array.from({ length: 30 }, (_, i) => ({
+        ...baseAlert,
+        transaction_hash: `hash_${String(i).padStart(3, '0')}`,
+        timestamp: baseAlert.timestamp + i * 1000,
+      }))
+
+      render(<WebhookLog alerts={manyAlerts} network="testnet" />)
+
+      // Page 1 displays 25 rows
+      expect(screen.getByText('1–25 of 30')).toBeInTheDocument()
+      expect(screen.getByText('Page 1 of 2')).toBeInTheDocument()
+
+      // Click Next
+      const nextBtn = screen.getByRole('button', { name: /next page/i })
+      fireEvent.click(nextBtn)
+
+      // Page 2 displays 5 rows
+      expect(screen.getByText('26–30 of 30')).toBeInTheDocument()
+      expect(screen.getByText('Page 2 of 2')).toBeInTheDocument()
+    })
+  })
+
+  describe('alert CSV export (issue #232)', () => {
+    it('calls buildCSV with headers and rows separately and includes contract label and network in filename', async () => {
+      const { exportCSV } = await import('@/components/WebhookLog')
+      const createObjectURLMock = vi.fn(() => 'blob:mock-url')
+      const revokeObjectURLMock = vi.fn()
+      globalThis.URL.createObjectURL = createObjectURLMock
+      globalThis.URL.revokeObjectURL = revokeObjectURLMock
+
+      const clickMock = vi.fn()
+      const originalCreateElement = document.createElement.bind(document)
+      let downloadedFilename = ''
+      vi.spyOn(document, 'createElement').mockImplementation((tag: string) => {
+        const el = originalCreateElement(tag)
+        if (tag === 'a') {
+          Object.defineProperty(el, 'click', { value: clickMock })
+          Object.defineProperty(el, 'download', {
+            set(val) {
+              downloadedFilename = val
+            },
+            get() {
+              return downloadedFilename
+            },
+          })
+        }
+        return el
+      })
+
+      vi.useFakeTimers()
+      exportCSV([baseAlert], 'My Contract', 'testnet')
+
+      expect(createObjectURLMock).toHaveBeenCalled()
+      expect(clickMock).toHaveBeenCalled()
+      expect(downloadedFilename).toBe('alerts-my_contract-testnet.csv')
+
+      // revokeObjectURL should be scheduled in setTimeout
+      expect(revokeObjectURLMock).not.toHaveBeenCalled()
+      act(() => {
+        vi.advanceTimersByTime(1500)
+      })
+      expect(revokeObjectURLMock).toHaveBeenCalledWith('blob:mock-url')
+    })
+  })
 })
+

@@ -336,6 +336,18 @@ describe('onAlertsChange', () => {
   })
 })
 
+describe('dashboard helpers — active webhooks & pause state (#229, #227)', () => {
+  it('counts only active (enabled and with webhook_url) contracts', async () => {
+    const { countActiveWebhooks, isContractPaused } = await import('../dashboard')
+    const contracts: WatchedContract[] = [
+      makeContract({ id: '1', webhook_url: 'https://example.com/1', enabled: true }),
+      makeContract({ id: '2', webhook_url: 'https://example.com/2', enabled: false }),
+      makeContract({ id: '3', webhook_url: '', enabled: true }),
+    ]
+    expect(countActiveWebhooks(contracts)).toBe(1)
+    expect(isContractPaused({ enabled: false })).toBe(true)
+    expect(isContractPaused({ paused: true })).toBe(true)
+    expect(isContractPaused({ enabled: true })).toBe(false)
 // ── Dashboard now tick memoization (issue #220) ──────────────────────────────
 
 describe('DashboardPage now memoization and tick updates (issue #220)', () => {
