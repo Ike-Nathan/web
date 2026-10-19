@@ -3,6 +3,10 @@
  * and responsive filter bar behaviour (issue #81).
  */
 
+import { render, screen, act, fireEvent } from '@testing-library/react';
+import ContractsClient from '../app/contracts/ContractsClient';
+import { getContracts } from '../lib/storage'; // Note: Ensure the mock targets `storage.ts`
+
 const PAGE_SIZE = 12
 
 function paginate<T>(items: T[], page: number): T[] {
@@ -594,6 +598,38 @@ describe('ContractsPage network filter counts and heading', () => {
   });
 });
 
+describe('contracts page — bulk selection (issue #216 paginated scope)', () => {
+  type ContractItem = { id: string; label: string; alert_count: number }
+
+  const items: ContractItem[] = [
+    { id: '1', label: 'Escrow Manager', alert_count: 3 },
+    { id: '2', label: 'Payment Router', alert_count: 0 },
+    { id: '3', label: 'Token Service', alert_count: 5 },
+  ]
+
+  function selectPage(selected: Set<string>, paginated: ContractItem[]): Set<string> {
+    const next = new Set(selected)
+    paginated.forEach(c => next.add(c.id))
+    return next
+  }
+
+  function selectAllFiltered(list: ContractItem[]): Set<string> {
+    return new Set(list.map((c) => c.id))
+  }
+
+  it('select-page selects every contract on the visible page', () => {
+    const paginated = items.slice(0, 2)
+    const selected = selectPage(new Set(), paginated)
+    expect(selected.size).toBe(2)
+    expect(selected.has('1')).toBe(true)
+    expect(selected.has('2')).toBe(true)
+    expect(selected.has('3')).toBe(false)
+  })
+
+  it('select-all-filtered selects every matching contract across all pages', () => {
+    const selected = selectAllFiltered(items)
+    expect(selected.size).toBe(3)
+    expect(selected.has('3')).toBe(true)
 
 jest.mock('../lib/contractSync', () => ({
   ...jest.requireActual('../lib/contractSync'),

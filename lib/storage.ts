@@ -334,6 +334,11 @@ function deleteAlerts(contractId: string) {
   )
 }
 
+export function deleteAlertsByNetwork(contractId: string, network: string) {
+  const alerts = load<AlertPayload>(ALERTS_KEY)
+  save(ALERTS_KEY, alerts.filter((a) => !(a.contract_id === contractId && a.network === network)))
+}
+
 // Persists a full alert list (used by the import flow to restore a backup).
 // Rewrites `contract_id` on every alert matching `oldContractId` so alert history
 // survives when an imported contract is re-keyed under a new id.

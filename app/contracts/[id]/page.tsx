@@ -4,6 +4,11 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { WatchedContract, AlertPayload, AlertRule, isRuleEnabled } from '@/types'
 import { syncSaveContract, syncDeleteContract } from '@/lib/contractSync'
+import { getContract, getAlerts, getContractByIdAndNetwork, getContracts, deleteAlertsByNetwork } from '@/lib/storage'
+import { truncateId, explorerContractUrl, isValidUrl, mapFreighterNetwork } from '@/lib/stellar'
+import { formatDate, formatRelativeTime, formatRuleSummary, maskWebhookUrl } from '@/lib/format'
+import { useAnalytics } from '@/lib/useAnalytics'
+import { useNow } from '@/lib/useNow'
 import { getContract, deleteContract, getAlerts, saveContract, seedMockAlerts, getContracts } from '@/lib/storage'
 import { truncateId, explorerContractUrl, isValidUrl, mapFreighterNetwork } from '@/lib/stellar'
 import { getContract, getAlerts, getContractByIdAndNetwork, getContracts } from '@/lib/storage'
@@ -142,6 +147,22 @@ export default function ContractDetailPage({ params }: { params: { id: string } 
     setContract(updated)
 
     const result = await syncPromise
+    if (!result.ok) showToast(result.error || 'API Sync Error', 'error')
+  }
+
+  async function toggleContractPause() {
+    const isEnabled = contract?.enabled ?? true
+    const updated = { ...contract!, enabled: !isEnabled }
+    const { saved, syncPromise } = syncSaveContract(updated, false)
+    if (!saved) return
+    setContract(updated)
+
+    trackEvent(updated.enabled ? 'contract_resumed' : 'contract_paused', { contractId: params.id })
+
+    const result = await syncPromise
+    setContract(updated)
+
+    const result = await syncPromise
     const { saved, sync } = syncSaveContract(updated, false)
     if (!saved) return
     setContract(updated)
@@ -222,6 +243,13 @@ export default function ContractDetailPage({ params }: { params: { id: string } 
       webhook_url: trimmedWebhookUrl,
       network: editedNetwork
     }
+    
+    // Explicitly delete alerts for the old network before state is lost
+    if (networkChanged) {
+      deleteAlertsByNetwork(contract!.contract_id, contract!.network)
+    }
+
+    const { saved, syncPromise } = syncSaveContract(updated, false)
     const { saved, syncPromise } = syncSaveContract(updated, false)
     const { saved, sync } = syncSaveContract(updated, false)
     if (!saved) {
@@ -400,6 +428,30 @@ export default function ContractDetailPage({ params }: { params: { id: string } 
             <NetworkEditField
               currentNetwork={editedNetwork}
               onNetworkChange={setEditedNetwork}
+            />
+
+            {metadataError && (
+              <p className="text-sm text-red-400">{metadataError}</p>
+            )}
+
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                onClick={handleCancelMetadataEdit}
+                className="px-3 py-1.5 rounded-lg border border-zinc-700 text-sm text-zinc-300 hover:text-zinc-100 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={saveMetadata}
+                className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-sm font-medium text-white transition-colors"
+              >
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
               value={editedNetwork}
               onChange={setEditedNetwork}
             />
@@ -575,6 +627,8 @@ export default function ContractDetailPage({ params }: { params: { id: string } 
           <span className="text-sm font-mono text-zinc-400 break-all">{maskWebhookUrl(contract.webhook_url)}</span>
           <CopyButton text={contract.webhook_url} />
         </div>
+      </div>
+
         <NotificationToggle />
       </div>
 

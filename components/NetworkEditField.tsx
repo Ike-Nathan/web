@@ -20,14 +20,14 @@ const NETWORK_OPTIONS: { value: StellarNetwork; label: string }[] = [
 
 const CAUTION_MESSAGES: Record<StellarNetwork, string> = {
   mainnet:
-    'Switching to Mainnet: alert rules and duplicate-detection history are network-scoped. ' +
-    'Existing alerts may not match mainnet transactions until re-evaluated.',
+    'Switching to Mainnet: Alert history for the current network will be permanently deleted. ' +
+    'Duplicate-detection context will reset.',
   testnet:
-    'Switching to Testnet: this contract will no longer watch mainnet activity. ' +
+    'Switching to Testnet: Alert history for the current network will be permanently deleted. ' +
     'Duplicate-detection context will reset.',
   futurenet:
-    'Switching to Futurenet: this is an experimental network. ' +
-    'Alert history and duplicate detection will be cleared.',
+    'Switching to Futurenet: Alert history for the current network will be permanently deleted. ' +
+    'Duplicate-detection context will reset.',
 };
 
 export function NetworkEditField({
