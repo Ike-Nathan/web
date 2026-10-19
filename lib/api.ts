@@ -1,4 +1,4 @@
-import { horizonUrl } from '@/lib/stellar'
+import { horizonUrl, isValidContractId } from '@/lib/stellar'
 import { SIGNATURE_HEADER, signWebhookPayload } from './webhookSignature'
 import { getAuthorizationHeader, notifyAuthRequired } from './apiAuth'
 import type { AlertPayload, AlertRule, Network } from '@/types'
@@ -229,6 +229,71 @@ export function ruleFromPayload(payload: AlertPayload): AlertRule | undefined {
   }
 }
 
+const TEST_PAYLOAD_NETWORKS: Network[] = ['mainnet', 'testnet', 'futurenet']
+const MAX_TEST_LABEL_LENGTH = 100
+
+/** JSON with object keys sorted, so equal payloads compare equal. */
+function canonicalJson(value: unknown): string {
+  return JSON.stringify(value, (_key, v) =>
+    v && typeof v === 'object' && !Array.isArray(v)
+      ? Object.fromEntries(
+          Object.entries(v as Record<string, unknown>).sort(([a], [b]) =>
+            a < b ? -1 : a > b ? 1 : 0
+          )
+        )
+      : v
+  )
+}
+
+/**
+ * Parses a caller-supplied test payload body and returns it only if it is
+ * exactly what buildTestWebhookPayload would produce for its own contract,
+ * network, rule, label, timestamp and transaction hash. The proxy uses this
+ * so it forwards dashboard-built test payloads verbatim (keeping the
+ * browser's signature valid) without becoming a relay for arbitrary
+ * content (#261). Returns null for anything else.
+ */
+export function parseCanonicalTestPayload(body: string): AlertPayload | null {
+  let p: Record<string, unknown>
+  try {
+    p = JSON.parse(body)
+  } catch {
+    return null
+  }
+  if (typeof p !== 'object' || p === null || Array.isArray(p)) return null
+  if (p.is_test !== true) return null
+  if (typeof p.contract_id !== 'string' || !isValidContractId(p.contract_id))
+    return null
+  if (!TEST_PAYLOAD_NETWORKS.includes(p.network as Network)) return null
+  if (
+    typeof p.label !== 'string' ||
+    !p.label ||
+    p.label.length > MAX_TEST_LABEL_LENGTH
+  )
+    return null
+  if (typeof p.timestamp !== 'number' || !Number.isFinite(p.timestamp))
+    return null
+  if (
+    typeof p.transaction_hash !== 'string' ||
+    !/^[0-9a-f]{64}$/.test(p.transaction_hash)
+  )
+    return null
+  if (typeof p.rule_triggered !== 'string') return null
+
+  const payload = p as unknown as AlertPayload
+  const rule = ruleFromPayload(payload)
+  if (!rule) return null
+  const rebuilt = buildTestWebhookPayload({
+    contractId: payload.contract_id,
+    network: payload.network as Network,
+    rule,
+    label: payload.label,
+    timestamp: payload.timestamp,
+    transactionHash: payload.transaction_hash,
+  })
+  return canonicalJson(rebuilt) === canonicalJson(payload) ? payload : null
+}
+
 interface SendTestWebhookTransport {
   /** Caller-owned signal, or a timeout in milliseconds (default 10000). */
   signalOrTimeoutMs?: AbortSignal | number
@@ -313,29 +378,40 @@ export async function sendTestWebhook(
     const isBrowser = typeof window !== 'undefined'
     const useProxy = isBrowser && process.env.NODE_ENV !== 'test'
 
-    let res: Response
     if (useProxy) {
-      res = await fetch('/api/test-webhook', {
+      // The body is signed here in the browser; only the signature crosses
+      // the network, never the secret, so it cannot end up in server logs,
+      // APM traces or error reports. The proxy forwards both verbatim.
+      const proxyRes = await fetch('/api/test-webhook', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        // The proxy builds the payload itself from these fields.
         body: JSON.stringify({
           url: webhookUrl,
-          contractId: payload.contract_id,
-          network: payload.network,
-          rule: ruleFromPayload(payload),
-          secret,
+          body,
+          ...(headers[SIGNATURE_HEADER]
+            ? { signature: headers[SIGNATURE_HEADER] }
+            : {}),
         }),
         signal,
       })
-    } else {
-      res = await fetch(webhookUrl, {
-        method: 'POST',
-        headers,
-        body,
-        signal,
-      })
+      // The proxy reports the receiver's status in its JSON; its own HTTP
+      // status is not the receiver's.
+      const data = (await proxyRes.json().catch(() => ({}))) as {
+        status?: number
+        ok?: boolean
+      }
+      return {
+        status: typeof data.status === 'number' ? data.status : proxyRes.status,
+        ok: data.ok === true,
+      }
     }
+
+    const res = await fetch(webhookUrl, {
+      method: 'POST',
+      headers,
+      body,
+      signal,
+    })
 
     // The status is reported back rather than thrown on, so callers can show
     // the actual code; a non-2xx is still a failed delivery.

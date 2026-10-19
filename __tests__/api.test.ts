@@ -10,6 +10,7 @@ import {
   TEST_TX_HASH,
 } from '@/lib/api'
 import { horizonUrl } from '@/lib/stellar'
+import { signWebhookPayload } from '@/lib/webhookSignature'
 
 global.fetch = vi.fn()
 
@@ -158,6 +159,41 @@ describe('sendTestWebhook', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+  })
+
+  it('signs in the browser and never sends the secret to the proxy', async () => {
+    vi.stubEnv('NODE_ENV', 'production')
+    try {
+      ;(global.fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ status: 204, ok: true }),
+      })
+      const secret = 'whsec_super_secret_value'
+
+      const result = await sendTestWebhook('https://example.com/hook', {
+        contractId: 'CBCDEF',
+        secret,
+      })
+
+      const [url, init] = (global.fetch as unknown as ReturnType<typeof vi.fn>)
+        .mock.calls[0]
+      expect(url).toBe('/api/test-webhook')
+      const raw = (init as RequestInit).body as string
+      expect(raw).not.toContain(secret)
+      const sent = JSON.parse(raw)
+      expect(sent).not.toHaveProperty('secret')
+      expect(sent.url).toBe('https://example.com/hook')
+      expect(sent.signature).toBe(await signWebhookPayload(secret, sent.body))
+      expect(JSON.parse(sent.body)).toMatchObject({
+        contract_id: 'CBCDEF',
+        is_test: true,
+      })
+      // The receiver's status comes from the proxy's JSON, not its HTTP code.
+      expect(result).toEqual({ status: 204, ok: true })
+    } finally {
+      vi.unstubAllEnvs()
+    }
   })
 
   it('sends the rule-aware payload for the selected rule', async () => {
