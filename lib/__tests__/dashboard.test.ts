@@ -11,6 +11,7 @@ import {
   bucketAlertsByHour,
   onAlertsChange,
 } from '../storage'
+import { bucketAlerts } from '../dashboard'
 import { WatchedContract, AlertPayload } from '@/types'
 
 // Minimal localStorage shim for node environment
@@ -375,6 +376,71 @@ describe('DashboardPage now memoization and tick updates (issue #220)', () => {
 
     unsub()
     vi.useRealTimers()
+describe('bucketAlerts — calendar alignment and DST resilience', () => {
+  it('creates 7 calendar-aligned daily buckets with setDate', () => {
+    const anchor = new Date('2026-11-03T15:00:00Z')
+    const series = bucketAlerts([], '7d', 'network', anchor)
+    expect(series.buckets).toHaveLength(7)
+    expect(series.total).toBe(0)
+    expect(series.max).toBe(0)
+
+    // Check each bucket starts at 00:00:00 local time
+    for (const b of series.buckets) {
+      expect(b.start.getHours()).toBe(0)
+      expect(b.start.getMinutes()).toBe(0)
+      expect(b.start.getSeconds()).toBe(0)
+      expect(b.end.getTime() - b.start.getTime()).toBeGreaterThanOrEqual(23 * 3600 * 1000)
+    }
+  })
+
+  it('groups alert counts by network and by ruleType', () => {
+    const anchor = new Date('2026-11-03T12:00:00Z')
+    const alertTime = new Date(anchor).getTime()
+    const alerts: AlertPayload[] = [
+      makeAlert({
+        transaction_hash: 'h1',
+        network: 'mainnet',
+        rule_triggered: 'LargeTransfer',
+        timestamp: alertTime,
+      }),
+      makeAlert({
+        transaction_hash: 'h2',
+        network: 'testnet',
+        rule_triggered: 'LargeTransfer',
+        timestamp: alertTime,
+      }),
+      makeAlert({
+        transaction_hash: 'h3',
+        network: 'testnet',
+        rule_triggered: 'FunctionCalled',
+        timestamp: alertTime,
+      }),
+    ]
+
+    const netSeries = bucketAlerts(alerts, '7d', 'network', anchor)
+    expect(netSeries.total).toBe(3)
+    expect(netSeries.groups).toEqual(['mainnet', 'testnet'])
+    const lastNetBucket = netSeries.buckets[6]
+    expect(lastNetBucket.total).toBe(3)
+    expect(lastNetBucket.byGroup.mainnet).toBe(1)
+    expect(lastNetBucket.byGroup.testnet).toBe(2)
+
+    const ruleSeries = bucketAlerts(alerts, '7d', 'ruleType', anchor)
+    expect(ruleSeries.groups).toEqual(['FunctionCalled', 'LargeTransfer'])
+    const lastRuleBucket = ruleSeries.buckets[6]
+    expect(lastRuleBucket.total).toBe(3)
+    expect(lastRuleBucket.byGroup.LargeTransfer).toBe(2)
+    expect(lastRuleBucket.byGroup.FunctionCalled).toBe(1)
+  })
+
+  it('generates 24 hourly buckets for 24h range', () => {
+    const anchor = new Date('2026-11-03T14:30:00Z')
+    const series = bucketAlerts([], '24h', 'network', anchor)
+    expect(series.buckets).toHaveLength(24)
+    for (const b of series.buckets) {
+      expect(b.start.getMinutes()).toBe(0)
+      expect(b.end.getTime() - b.start.getTime()).toBe(3600 * 1000)
+    }
   })
 })
 
