@@ -33,7 +33,6 @@ vi.mock('@/lib/stellar', async (importOriginal) => {
   return {
     ...actual,
     checkContractOnNetwork: vi.fn().mockResolvedValue(true),
-    contractExists: vi.fn().mockResolvedValue(true),
   }
 })
 
