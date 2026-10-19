@@ -1,4 +1,7 @@
 'use client'
+import { getRuleMeta } from '@/lib/ruleMeta'
+import { AlertRuleType } from '@/types'
+import { useId, useState } from 'react'
 
 import { AlertRuleType, isAlertRuleType } from '@/types'
 import { useId, useState } from 'react'
@@ -27,11 +30,14 @@ const descriptions: Record<AlertRuleType, string> = {
   TransactionFailed: 'Alert when a transaction fails',
 }
 
-const UNKNOWN_STYLE = 'bg-zinc-800 text-zinc-400 border-zinc-600'
-
-export default function AlertRuleBadge({ type }: { type: AlertRuleType | string }) {
+export default function AlertRuleBadge({
+  type,
+}: {
+  type: AlertRuleType | string
+}) {
   const [showTooltip, setShowTooltip] = useState(false)
   const tooltipId = useId()
+  const { label, description, style } = getRuleMeta(type)
 
   const known = isAlertRuleType(type)
   const style = known ? styles[type] : UNKNOWN_STYLE
@@ -42,6 +48,8 @@ export default function AlertRuleBadge({ type }: { type: AlertRuleType | string 
     <div className="relative inline-block">
       <button
         type="button"
+        data-testid="alert-rule-badge"
+        aria-describedby={showTooltip ? tooltipId : undefined}
         aria-describedby={showTooltip ? tooltipId : undefined}
         aria-label={label}
         className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium border cursor-help focus:outline-none focus-visible:ring-2 focus-visible:ring-zinc-400 ${style}`}

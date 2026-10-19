@@ -3,6 +3,16 @@ import { horizonUrl, sorobanRpcUrl } from './lib/networkUrls.mjs'
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   async headers() {
+    const hstsHeaders =
+      process.env.NODE_ENV === 'production' &&
+      process.env.ENABLE_HSTS === 'true'
+        ? [
+            {
+              key: 'Strict-Transport-Security',
+              value: 'max-age=31536000; includeSubDomains',
+            },
+          ]
+        : []
     // #118: Build CSP with support for Freighter and configured API/RPC hosts
     const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'https://api.example.com'
     const networks = ['mainnet', 'testnet', 'futurenet']
@@ -22,6 +32,7 @@ const nextConfig = {
           { key: 'X-Content-Type-Options', value: 'nosniff' },
           { key: 'X-Frame-Options', value: 'DENY' },
           { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
+          ...hstsHeaders,
           // #118: CSP allows self, API, Horizon, Soroban RPC, and Freighter
           {
             key: 'Content-Security-Policy',
