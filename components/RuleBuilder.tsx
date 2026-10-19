@@ -3,6 +3,7 @@
 import { type KeyboardEvent, useEffect, useId, useRef, useState } from 'react'
 import { AlertRule, AlertRuleType, isRuleEnabled } from '@/types'
 import { formatRuleSummary } from '@/lib/format'
+import { MAX_XLM_DECIMALS, validateThreshold } from '@/lib/formatAmount'
 import { getRuleMeta } from '@/lib/ruleMeta'
 import { isValidFunctionName, sanitizeAdminFunctionNames } from '@/lib/soroban'
 import AlertRuleBadge from './AlertRuleBadge'
@@ -39,18 +40,6 @@ const RULE_PRESETS: { name: string; rules: AlertRule[] }[] = [
     rules: [{ type: 'TransactionFailed' }],
   },
 ]
-
-/** XLM supports at most 7 decimal places (stroops). */
-const MAX_XLM_DECIMALS = 7
-/** Total XLM supply — a reasonable upper bound for a transfer threshold. */
-const MAX_XLM_THRESHOLD = 50_000_000_000
-
-/** Returns true when the value has no more than 7 decimal places. */
-function hasValidPrecision(value: number): boolean {
-  if (!isFinite(value)) return false
-  const decimals = (String(value).split('.')[1] ?? '').length
-  return decimals <= MAX_XLM_DECIMALS
-}
 
 /** Formats a number with thousands separators, preserving up to 7 decimals. */
 function formatXlm(value: number): string {
@@ -174,27 +163,13 @@ export default function RuleBuilder({
   function buildRule(): AlertRule | null {
     switch (draftType) {
       case 'LargeTransfer': {
-        const parsed =
-          thresholdText.trim() === '' ? NaN : parseFloat(thresholdText)
-        if (isNaN(parsed)) {
-          setError('Enter a valid XLM threshold')
+        // Validate the raw text: a parsed number loses precision information.
+        const result = validateThreshold(thresholdText)
+        if (!result.ok) {
+          setError(result.error)
           return null
         }
-        if (parsed <= 0) {
-          setError('Threshold must be greater than 0')
-          return null
-        }
-        if (!hasValidPrecision(parsed)) {
-          setError('Threshold supports at most 7 decimal places')
-          return null
-        }
-        if (parsed > MAX_XLM_THRESHOLD) {
-          setError(
-            `Threshold cannot exceed ${formatXlm(MAX_XLM_THRESHOLD)} XLM`
-          )
-          return null
-        }
-        return { type: 'LargeTransfer', threshold_xlm: parsed }
+        return { type: 'LargeTransfer', threshold_xlm: result.value }
       }
       case 'FunctionCalled': {
         const name = functionName.trim()

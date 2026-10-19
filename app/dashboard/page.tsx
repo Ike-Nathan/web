@@ -4,10 +4,14 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useContracts } from '@/lib/useContracts'
 import { getAlerts, getNetworkDistribution } from '@/lib/storage'
+import { hasActiveWebhooks } from '@/lib/contractsApi'
+import { getAlerts, getNetworkDistribution, onAlertsChange } from '@/lib/storage'
 import ContractCard from '@/components/ContractCard'
 import EmptyState from '@/components/EmptyState'
 import NetworkBadge from '@/components/NetworkBadge'
 import DashboardSkeleton from '@/components/DashboardSkeleton'
+import AlertActivityChart from '@/components/AlertActivityChart'
+import { getLatestAlertTimestamps } from '@/lib/alertSource'
 import { Network, AlertPayload } from '@/types'
 
 const DAY_MS = 24 * 60 * 60 * 1000
@@ -37,9 +41,10 @@ function bucketAlerts(alerts: AlertPayload[], now: number, bucketMs: number, buc
 function AlertActivityChart({ title, buckets }: { title: string; buckets: AlertBucket[] }) {
   const max = Math.max(1, ...buckets.map((b) => b.count))
   const width = 320
-  const height = 120
+  const height = 100
   const gap = 6
   const barWidth = (width - gap * (buckets.length - 1)) / buckets.length
+  const isHourly = buckets.length > 7
 
   return (
     <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5">
@@ -48,36 +53,42 @@ function AlertActivityChart({ title, buckets }: { title: string; buckets: AlertB
         role="img"
         aria-label={`${title} bar chart`}
         viewBox={`0 0 ${width} ${height}`}
-        className="mt-4 w-full h-32"
+        className="mt-4 w-full h-24"
         preserveAspectRatio="none"
       >
         {buckets.map((bucket, i) => {
-          const barHeight = (bucket.count / max) * (height - 20)
+          const barHeight = (bucket.count / max) * height
           const x = i * (barWidth + gap)
           const y = height - barHeight
           return (
-            <g key={i}>
-              <rect
-                x={x}
-                y={y}
-                width={barWidth}
-                height={barHeight}
-                rx={2}
-                className="fill-indigo-500"
-              />
-              <text
-                x={x + barWidth / 2}
-                y={height - 4}
-                textAnchor="middle"
-                className="fill-zinc-500"
-                fontSize={9}
-              >
-                {bucket.label}
-              </text>
-            </g>
+            <rect
+              key={i}
+              x={x}
+              y={y}
+              width={barWidth}
+              height={barHeight}
+              rx={2}
+              className="fill-indigo-500"
+            />
           )
         })}
       </svg>
+      {/* HTML axis labels to prevent stretching and overlapping */}
+      <div className="flex items-center justify-between mt-2 text-[10px] text-zinc-500 select-none">
+        {buckets.map((bucket, i) => {
+          let visibility = 'text-center'
+          if (isHourly) {
+            if (i % 6 !== 0) {
+              visibility = i % 3 === 0 ? 'hidden sm:block text-center' : 'hidden lg:block text-center'
+            }
+          }
+          return (
+            <span key={i} className={`flex-1 ${visibility}`}>
+              {bucket.label}
+            </span>
+          )
+        })}
+      </div>
       <table className="sr-only">
         <caption>{title}</caption>
         <thead>
@@ -106,6 +117,7 @@ export default function DashboardPage() {
   const [alertsToday, setAlertsToday] = useState(0)
   const [allAlerts, setAllAlerts] = useState<AlertPayload[]>([])
   const [mounted, setMounted] = useState(false)
+  const [now, setNow] = useState<number>(() => Date.now())
 
   const refreshAlertsToday = useCallback(() => {
     const collected: AlertPayload[] = []
@@ -116,10 +128,10 @@ export default function DashboardPage() {
     const startOfToday = new Date()
     startOfToday.setHours(0, 0, 0, 0)
     setAlertsToday(collected.filter((a) => a.timestamp >= startOfToday.getTime()).length)
+    setNow(Date.now())
     setMounted(true)
   }, [contracts])
 
-  const now = Date.now()
   const dailyBuckets = useMemo(
     () => bucketAlerts(allAlerts, now, DAY_MS, 7),
     [allAlerts, now]
@@ -127,7 +139,26 @@ export default function DashboardPage() {
   const hourlyBuckets = useMemo(
     () => bucketAlerts(allAlerts, now, HOUR_MS, 24),
     [allAlerts, now]
+  const latestAlerts = useMemo(
+    () => getLatestAlertTimestamps(allAlerts),
+    [allAlerts]
   )
+
+  // Update `now` every 60 seconds
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setNow(Date.now())
+    }, 60000)
+    return () => clearInterval(timer)
+  }, [])
+
+  // Update `now` on alert changes
+  useEffect(() => {
+    return onAlertsChange(() => {
+      refreshAlertsToday()
+      setNow(Date.now())
+    })
+  }, [refreshAlertsToday])
 
   useEffect(() => {
     refreshAlertsToday()
@@ -156,26 +187,23 @@ export default function DashboardPage() {
     return () => clearTimeout(timer)
   }, [refreshAlertsToday])
 
-  const activeWebhooks = contracts.filter((c) => c.webhook_url).length
+  const activeWebhooks = contracts.filter(hasActiveWebhooks).length
   const networkCounts = contracts.length > 0 ? getNetworkDistribution() : ({} as Record<Network, number>)
   const networkSummary = (['mainnet', 'testnet', 'futurenet'] as Network[])
     .filter((network) => networkCounts[network])
     .map((network) => ({ network, count: networkCounts[network] }))
 
-  function lastAlertTime(contractId: string): number | undefined {
-    const alerts = getAlerts(contractId)
-    return alerts[0]?.timestamp
-  }
-
   if (!mounted) return <DashboardSkeleton />
 
   // Sort by most recent alert (descending), then by label (ascending).
-  const sortedContracts = [...contracts].sort((a, b) => {
-    const aAlert = lastAlertTime(a.contract_id) ?? 0
-    const bAlert = lastAlertTime(b.contract_id) ?? 0
-    if (bAlert !== aAlert) return bAlert - aAlert
-    return a.label.localeCompare(b.label)
-  })
+  const sortedContracts = useMemo(() => {
+    return [...contracts].sort((a, b) => {
+      const aAlert = latestAlerts[`${a.network}:${a.contract_id}`] ?? latestAlerts[a.contract_id] ?? 0
+      const bAlert = latestAlerts[`${b.network}:${b.contract_id}`] ?? latestAlerts[b.contract_id] ?? 0
+      if (bAlert !== aAlert) return bAlert - aAlert
+      return a.label.localeCompare(b.label)
+    })
+  }, [contracts, latestAlerts])
 
   const visibleContracts = sortedContracts.slice(0, DASHBOARD_CARD_LIMIT)
   const hasMoreContracts = sortedContracts.length > DASHBOARD_CARD_LIMIT
@@ -202,7 +230,7 @@ export default function DashboardPage() {
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
         {[
           { label: 'Contracts Watched', value: contracts.length, href: '/contracts' },
-          { label: 'Alerts Today', value: alertsToday, href: '/contracts?filter=alerts' },
+          { label: 'Alerts Today', value: alertsToday, href: '/contracts?filter=alerts-today' },
           { label: 'Active Webhooks', value: activeWebhooks, href: '/contracts?filter=webhooks' },
         ].map((stat) => (
           <Link key={stat.label} href={stat.href} className="bg-zinc-900 border border-zinc-800 rounded-xl p-5 hover:border-zinc-600 transition-colors">
@@ -230,10 +258,7 @@ export default function DashboardPage() {
       </div>
 
       {/* Alert activity charts */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <AlertActivityChart title="Alerts (last 7 days)" buckets={dailyBuckets} />
-        <AlertActivityChart title="Alerts (last 24 hours)" buckets={hourlyBuckets} />
-      </div>
+      <AlertActivityChart alerts={allAlerts} />
 
       {/* Contract cards */}
       <div>
@@ -262,7 +287,11 @@ export default function DashboardPage() {
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
             {visibleContracts.map((c) => (
-              <ContractCard key={c.id} contract={c} lastAlertTime={lastAlertTime(c.contract_id)} />
+              <ContractCard
+                key={c.id}
+                contract={c}
+                lastAlertTime={latestAlerts[`${c.network}:${c.contract_id}`] ?? latestAlerts[c.contract_id]}
+              />
             ))}
           </div>
         )}

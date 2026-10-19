@@ -1,5 +1,6 @@
 import { horizonUrl, isValidContractId } from '@/lib/stellar'
 import { SIGNATURE_HEADER, signWebhookPayload } from './webhookSignature'
+import { sanitizeBodySnippet } from './bodySnippet'
 import { getAuthorizationHeader, notifyAuthRequired } from './apiAuth'
 import type { AlertPayload, AlertRule, Network } from '@/types'
 
@@ -119,9 +120,15 @@ export async function apiFetch<T>(
 
 /** Result of a test webhook delivery: the HTTP status and whether it succeeded. */
 export interface TestWebhookResult {
+  /** The receiver's HTTP status (not the proxy's). */
   status: number
   ok: boolean
+  /** Round-trip time to the receiver, in milliseconds. */
   durationMs?: number
+  /** Sanitised first bytes (max 1 KB) of a text response body. */
+  bodySnippet?: string | null
+  /** Why the delivery could not be made (e.g. blocked URL, timeout). */
+  error?: string
 }
 
 /**
@@ -304,7 +311,7 @@ interface SendTestWebhookTransport {
   /**
    * Signing secret for the delivery. When provided (e.g. the stored
    * `webhook_secret` of a watched contract), the request body is signed with
-   * HMAC-SHA256 and the signature is sent in the `SIGNATURE_HEADER` header.
+   * HMAC-SHA256 (timestamped, `t=…,v1=…`) and sent in the `SIGNATURE_HEADER` header.
    */
   secret?: string
 }
@@ -403,11 +410,41 @@ export async function sendTestWebhook(
       const data = (await proxyRes.json().catch(() => ({}))) as {
         status?: number
         ok?: boolean
+      // The proxy answers with the receiver's status, timing and body snippet
+      // as JSON; its own HTTP status is not the receiver's.
+      const data = (await proxyRes.json().catch(() => ({}))) as {
+        status?: number
+        ok?: boolean
+        durationMs?: number
+        bodySnippet?: string | null
+        error?: string
       }
       return {
         status: typeof data.status === 'number' ? data.status : proxyRes.status,
         ok: data.ok === true,
       }
+        durationMs: data.durationMs,
+        bodySnippet: data.bodySnippet ?? null,
+        ...(data.error ? { error: data.error } : {}),
+      }
+    }
+
+    const startedAt = Date.now()
+    const res = await fetch(webhookUrl, {
+      method: 'POST',
+      headers,
+      body,
+      signal,
+    })
+    const durationMs = Date.now() - startedAt
+    let bodySnippet: string | null = null
+    try {
+      bodySnippet = sanitizeBodySnippet(
+        new Uint8Array(await res.arrayBuffer()),
+        res.headers.get('content-type')
+      )
+    } catch {
+      // The status is what matters; a body that can't be read is not an error.
     }
 
     const res = await fetch(webhookUrl, {
@@ -419,7 +456,7 @@ export async function sendTestWebhook(
 
     // The status is reported back rather than thrown on, so callers can show
     // the actual code; a non-2xx is still a failed delivery.
-    return { status: res.status, ok: res.ok }
+    return { status: res.status, ok: res.ok, durationMs, bodySnippet }
   } catch (error) {
     if (timedOut || internalController.signal.aborted) {
       throw new Error('Webhook request timed out')

@@ -9,6 +9,7 @@ import {
   alertKey,
   fetchAlerts,
   filterNewAlerts,
+  getLatestAlertTimestamps,
   nextPollDelay,
   startAlertPolling,
   syncAlerts,
@@ -263,3 +264,75 @@ describe('alert identity', () => {
     ])
   })
 })
+
+describe('getLatestAlertTimestamps', () => {
+  it('returns an empty map for empty alerts', () => {
+    expect(getLatestAlertTimestamps([])).toEqual({})
+  })
+
+  it('indexes latest alert timestamps by network:contract_id and contract_id', () => {
+    const alerts: AlertPayload[] = [
+      {
+        label: 'Contract A',
+        contract_id: 'CA_TEST',
+        network: 'testnet',
+        rule_triggered: 'AnyTransaction',
+        transaction_hash: 'tx1',
+        timestamp: 1000,
+        horizon_link: 'link1',
+      },
+      {
+        label: 'Contract A',
+        contract_id: 'CA_TEST',
+        network: 'testnet',
+        rule_triggered: 'AnyTransaction',
+        transaction_hash: 'tx2',
+        timestamp: 5000,
+        horizon_link: 'link2',
+      },
+      {
+        label: 'Contract B',
+        contract_id: 'CB_MAIN',
+        network: 'mainnet',
+        rule_triggered: 'LargeTransfer',
+        transaction_hash: 'tx3',
+        timestamp: 3000,
+        horizon_link: 'link3',
+      },
+    ]
+
+    const result = getLatestAlertTimestamps(alerts)
+    expect(result['testnet:CA_TEST']).toBe(5000)
+    expect(result['CA_TEST']).toBe(5000)
+    expect(result['mainnet:CB_MAIN']).toBe(3000)
+    expect(result['CB_MAIN']).toBe(3000)
+  })
+
+  it('does not overwrite newer timestamp with an older timestamp', () => {
+    const alerts: AlertPayload[] = [
+      {
+        label: 'Contract A',
+        contract_id: 'CA',
+        network: 'testnet',
+        rule_triggered: 'AnyTransaction',
+        transaction_hash: 'tx1',
+        timestamp: 10000,
+        horizon_link: 'link1',
+      },
+      {
+        label: 'Contract A',
+        contract_id: 'CA',
+        network: 'testnet',
+        rule_triggered: 'AnyTransaction',
+        transaction_hash: 'tx2',
+        timestamp: 2000,
+        horizon_link: 'link2',
+      },
+    ]
+
+    const result = getLatestAlertTimestamps(alerts)
+    expect(result['testnet:CA']).toBe(10000)
+    expect(result['CA']).toBe(10000)
+  })
+})
+

@@ -1,0 +1,33 @@
+name: Testnet smoke
+
+# Checks contract lookups against the real testnet Soroban RPC. Kept out of the
+# required CI job so testnet outages never block merges.
+on:
+  schedule:
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    name: Contract lookup against testnet
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run smoke tests
+        run: npm run test:smoke
+        env:
+          TESTNET_SMOKE: '1'

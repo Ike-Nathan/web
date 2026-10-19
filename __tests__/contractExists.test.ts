@@ -1,14 +1,16 @@
 import { vi } from 'vitest'
+import { Address, StrKey, xdr } from '@stellar/stellar-sdk'
 import {
   contractExists,
+  contractInstanceLedgerKey,
   getLedgerEntriesRequest,
-  CONTRACT_INSTANCE_KEY,
 } from '@/lib/contractExists'
 import { sorobanRpcUrl } from '@/lib/stellar'
 
 global.fetch = vi.fn()
 
-const CONTRACT_ID = `C${'A'.repeat(55)}`
+// A checksum-valid contract StrKey (all-zero hash).
+const CONTRACT_ID = StrKey.encodeContract(Buffer.alloc(32))
 
 const fetchMock = () => global.fetch as unknown as ReturnType<typeof vi.fn>
 
@@ -27,8 +29,21 @@ describe('getLedgerEntriesRequest', () => {
       jsonrpc: '2.0',
       id: 1,
       method: 'getLedgerEntries',
-      params: { keys: [{ contractInstance: { contractId: CONTRACT_ID, key: CONTRACT_INSTANCE_KEY } }] },
+      params: { keys: [contractInstanceLedgerKey(CONTRACT_ID)] },
     })
+  })
+
+  it('sends a base64 LedgerKey XDR that decodes to the contract instance entry', () => {
+    const [key] = JSON.parse(getLedgerEntriesRequest(CONTRACT_ID)).params.keys
+    expect(typeof key).toBe('string')
+
+    const ledgerKey = xdr.LedgerKey.fromXDR(key, 'base64')
+    expect(ledgerKey.switch()).toEqual(xdr.LedgerEntryType.contractData())
+
+    const data = ledgerKey.contractData()
+    expect(Address.fromScAddress(data.contract()).toString()).toBe(CONTRACT_ID)
+    expect(data.key().switch()).toEqual(xdr.ScValType.scvLedgerKeyContractInstance())
+    expect(data.durability()).toEqual(xdr.ContractDataDurability.persistent())
   })
 })
 
@@ -45,7 +60,7 @@ describe('contractExists', () => {
     const [url, init] = fetchMock().mock.calls[0]
     expect(url).toBe(sorobanRpcUrl('testnet'))
     expect((init.headers as Record<string, string>)['Content-Type']).toBe('application/json')
-    expect(JSON.parse(init.body).params.keys[0].contractInstance.contractId).toBe(CONTRACT_ID)
+    expect(JSON.parse(init.body).params.keys[0]).toBe(contractInstanceLedgerKey(CONTRACT_ID))
   })
 
   it('reports not_found when the RPC returns no entries', async () => {

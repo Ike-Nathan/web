@@ -244,12 +244,44 @@ describe('sendTestWebhook', () => {
 
     // A non-2xx is reported as a result rather than thrown, so the caller can
     // surface the actual status code (see app/contracts/new/page.tsx).
-    await expect(
-      sendTestWebhook('https://example.com/webhook', { contractId: 'CBCDEF' })
-    ).resolves.toEqual({
-      status: 404,
-      ok: false,
+    const result = await sendTestWebhook('https://example.com/webhook', {
+      contractId: 'CBCDEF',
     })
+    expect(result).toMatchObject({ status: 404, ok: false })
+    expect(typeof result.durationMs).toBe('number')
+  })
+
+  it('reports the receiver status, duration and body snippet from the proxy', async () => {
+    vi.stubEnv('NODE_ENV', 'production')
+    try {
+      ;(global.fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+        // The proxy itself answered 200; the receiver answered 404.
+        ok: true,
+        status: 200,
+        json: async () => ({
+          status: 404,
+          ok: false,
+          durationMs: 37,
+          bodySnippet: '<h1>Cannot POST /hook</h1>',
+        }),
+      })
+
+      const result = await sendTestWebhook('https://example.com/hook', {
+        contractId: 'CBCDEF',
+      })
+
+      expect(
+        (global.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0]
+      ).toBe('/api/test-webhook')
+      expect(result).toEqual({
+        status: 404,
+        ok: false,
+        durationMs: 37,
+        bodySnippet: '<h1>Cannot POST /hook</h1>',
+      })
+    } finally {
+      vi.unstubAllEnvs()
+    }
   })
 
   it('times out even when caller signal is provided (#22)', async () => {

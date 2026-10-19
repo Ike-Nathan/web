@@ -3,7 +3,39 @@ import {
   formatAmountValue,
   isZeroAmount,
   formatAmountCompact,
+  validateThreshold,
 } from '../lib/formatAmount';
+
+describe('validateThreshold', () => {
+  it.each([
+    ['0.00000001', /at most 7 decimal places/],
+    ['1e-7', /plain decimal number/],
+    ['1E3', /plain decimal number/],
+    ['50000000000.0000001', /cannot exceed 50,000,000,000 XLM/],
+    ['0', /greater than 0/],
+    ['0.0000000', /greater than 0/],
+    ['-5', /valid XLM threshold/],
+    ['', /valid XLM threshold/],
+    ['abc', /valid XLM threshold/],
+    ['1.2.3', /valid XLM threshold/],
+  ])('rejects %j', (raw, error) => {
+    const result = validateThreshold(raw);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toMatch(error);
+  });
+
+  it.each([
+    ['0.0000001', 0.0000001],
+    ['1000.1234567', 1000.1234567],
+    ['50000000000', 50_000_000_000],
+    ['50000000000.0000000', 50_000_000_000],
+    [' 42 ', 42],
+    ['.5', 0.5],
+    ['10.', 10],
+  ])('accepts %j', (raw, value) => {
+    expect(validateThreshold(raw)).toEqual({ ok: true, value });
+  });
+});
 
 describe('formatAmount', () => {
   it('formats XLM with 7 decimal places', () => {

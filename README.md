@@ -132,8 +132,34 @@ HORIZON_URLS.testnet // https://horizon-testnet.stellar.org
 HORIZON_URLS.futurenet // https://horizon-futurenet.stellar.org
 
 // Soroban JSON-RPC - contract simulation, ledger entries
+SOROBAN_RPC_URLS.mainnet // https://soroban-rpc.mainnet.stellar.gateway.fm
 SOROBAN_RPC_URLS.testnet // https://soroban-testnet.stellar.org
+SOROBAN_RPC_URLS.futurenet // https://rpc-futurenet.stellar.org
 ```
+
+Use `horizonUrl(network)` and `sorobanRpcUrl(network)` rather than the constants: they apply the overrides below.
+
+#### Choosing a Soroban RPC provider
+
+SDF runs public RPC for testnet and futurenet only. For mainnet the dashboard defaults to [Gateway.fm](https://gateway.fm)'s keyless public endpoint, so contract lookups work out of the box. Public endpoints are rate-limited and best-effort, so for production set your own:
+
+| Provider | Mainnet endpoint | Key needed |
+| --- | --- | --- |
+| Gateway.fm (default) | `https://soroban-rpc.mainnet.stellar.gateway.fm` | No |
+| Lightsail | `https://rpc.lightsail.network` | No |
+| Ankr | `https://rpc.ankr.com/stellar_soroban` | No (public tier); yes for higher limits |
+| Validation Cloud | `https://mainnet.stellar.validationcloud.io/v1/<API_KEY>/soroban/rpc` | Yes |
+| QuickNode, Blockdaemon, … | provider-specific | Yes |
+
+Configure endpoints in `.env.local`. Per-network variables win over the global one, and the Content-Security-Policy `connect-src` allow-list picks up whatever you set:
+
+```bash
+NEXT_PUBLIC_SOROBAN_RPC_URL_MAINNET=https://mainnet.stellar.validationcloud.io/v1/<API_KEY>/soroban/rpc
+NEXT_PUBLIC_SOROBAN_RPC_URL_TESTNET=   # default: https://soroban-testnet.stellar.org
+NEXT_PUBLIC_SOROBAN_RPC_URL=           # fallback for every network
+```
+
+The endpoint must allow cross-origin requests (CORS), because contract verification runs in the browser. Keys in `NEXT_PUBLIC_*` variables are visible to users, so use a key restricted to your domain or proxy the RPC.
 
 ### Querying Horizon
 
@@ -277,28 +303,49 @@ The `Test` button on the Add Contract form sends a mock payload to your endpoint
 
 ### Verifying webhook signatures
 
-Requests carry an `X-TxWatch-Signature: sha256=<hex>` header: the HMAC-SHA256 of the raw request body, keyed with your signing secret (generate one on the Add Contract form; it is shown once). Verify against the raw body, not re-serialised JSON:
+Requests carry an `X-TxWatch-Signature` header of the form `t=<unix seconds>,v1=<hex>`, where `v1` is the HMAC-SHA256 of `<t>.<raw request body>`, keyed with your signing secret (generate one on the Add Contract form; it is shown once). Because the timestamp is signed, a captured delivery can't be replayed later: reject any signature older than your tolerance window (5 minutes is a good default). Verify against the raw body, not re-serialised JSON. During secret rotation the header may carry more than one `v1` entry; accept the request if any of them matches.
 
 ```js
 import crypto from 'node:crypto'
 
-function verify(rawBody, header, secret) {
-  const expected =
-    'sha256=' +
-    crypto.createHmac('sha256', secret).update(rawBody).digest('hex')
-  const a = Buffer.from(expected)
-  const b = Buffer.from(header ?? '')
-  return a.length === b.length && crypto.timingSafeEqual(a, b)
+const TOLERANCE_SECONDS = 300
+
+function verify(rawBody, header, secret, now = Math.floor(Date.now() / 1000)) {
+  const parts = (header ?? '').split(',').map((p) => p.trim().split('='))
+  const t = Number(parts.find(([k]) => k === 't')?.[1])
+  const sigs = parts.filter(([k]) => k === 'v1').map(([, v]) => v)
+  if (!Number.isInteger(t) || sigs.length === 0) return false
+  if (Math.abs(now - t) > TOLERANCE_SECONDS) return false // stale: possible replay
+
+  const expected = crypto
+    .createHmac('sha256', secret)
+    .update(`${t}.${rawBody}`)
+    .digest()
+  return sigs.some((sig) => {
+    const b = Buffer.from(sig, 'hex')
+    return b.length === expected.length && crypto.timingSafeEqual(b, expected)
+  })
 }
 ```
 
 ```python
-import hmac, hashlib
+import hmac, hashlib, time
+
+TOLERANCE_SECONDS = 300
 
 def verify(raw_body: bytes, header: str, secret: str) -> bool:
-    expected = "sha256=" + hmac.new(secret.encode(), raw_body, hashlib.sha256).hexdigest()
-    return hmac.compare_digest(expected, header or "")
+    parts = [p.strip().split("=", 1) for p in (header or "").split(",") if "=" in p]
+    t = next((v for k, v in parts if k == "t"), None)
+    sigs = [v for k, v in parts if k == "v1"]
+    if t is None or not t.isdigit() or not sigs:
+        return False
+    if abs(time.time() - int(t)) > TOLERANCE_SECONDS:
+        return False  # stale: possible replay
+    expected = hmac.new(secret.encode(), t.encode() + b"." + raw_body, hashlib.sha256).hexdigest()
+    return any(hmac.compare_digest(expected, s) for s in sigs)
 ```
+
+The dashboard's own helper, `verifyWebhookSignature` in [`lib/webhookSignature.ts`](lib/webhookSignature.ts), implements the same check.
 
 ## CI
 

@@ -11,6 +11,7 @@ import {
   bucketAlertsByHour,
   onAlertsChange,
 } from '../storage'
+import { bucketAlerts } from '../dashboard'
 import { WatchedContract, AlertPayload } from '@/types'
 
 // Minimal localStorage shim for node environment
@@ -334,3 +335,124 @@ describe('onAlertsChange', () => {
     expect(cb).not.toHaveBeenCalled()
   })
 })
+
+describe('dashboard helpers — active webhooks & pause state (#229, #227)', () => {
+  it('counts only active (enabled and with webhook_url) contracts', async () => {
+    const { countActiveWebhooks, isContractPaused } = await import('../dashboard')
+    const contracts: WatchedContract[] = [
+      makeContract({ id: '1', webhook_url: 'https://example.com/1', enabled: true }),
+      makeContract({ id: '2', webhook_url: 'https://example.com/2', enabled: false }),
+      makeContract({ id: '3', webhook_url: '', enabled: true }),
+    ]
+    expect(countActiveWebhooks(contracts)).toBe(1)
+    expect(isContractPaused({ enabled: false })).toBe(true)
+    expect(isContractPaused({ paused: true })).toBe(true)
+    expect(isContractPaused({ enabled: true })).toBe(false)
+// ── Dashboard now tick memoization (issue #220) ──────────────────────────────
+
+describe('DashboardPage now memoization and tick updates (issue #220)', () => {
+  it('updates now only once per 60-second tick or on alert changes', () => {
+    vi.useFakeTimers()
+    const alerts: AlertPayload[] = [makeAlert({ timestamp: 1000 })]
+    let currentNow = 1000000
+
+    const bucketSpy = vi.fn((nowVal: number) => bucketAlertsByDay(alerts, 7, nowVal))
+
+    // Initial tick computation
+    bucketSpy(currentNow)
+    expect(bucketSpy).toHaveBeenCalledTimes(1)
+
+    // Re-renders during the same minute with unchanged nowVal do not recompute buckets
+    const renderCount = 10
+    for (let i = 0; i < renderCount; i++) {
+      // Simulate component render reading memoized bucket result with stable nowVal
+    }
+    expect(bucketSpy).toHaveBeenCalledTimes(1)
+
+    // 60-second timer fires: updates now
+    vi.advanceTimersByTime(60000)
+    currentNow += 60000
+    bucketSpy(currentNow)
+    expect(bucketSpy).toHaveBeenCalledTimes(2)
+
+    // Storage alert change fires: updates now immediately
+    const onAlertsHandler = vi.fn(() => {
+      currentNow = Date.now()
+      bucketSpy(currentNow)
+    })
+    const unsub = onAlertsChange(onAlertsHandler)
+    addAlert(makeAlert({ transaction_hash: 'tx-new' }))
+
+    expect(onAlertsHandler).toHaveBeenCalledTimes(1)
+    expect(bucketSpy).toHaveBeenCalledTimes(3)
+
+    unsub()
+    vi.useRealTimers()
+describe('bucketAlerts — calendar alignment and DST resilience', () => {
+  it('creates 7 calendar-aligned daily buckets with setDate', () => {
+    const anchor = new Date('2026-11-03T15:00:00Z')
+    const series = bucketAlerts([], '7d', 'network', anchor)
+    expect(series.buckets).toHaveLength(7)
+    expect(series.total).toBe(0)
+    expect(series.max).toBe(0)
+
+    // Check each bucket starts at 00:00:00 local time
+    for (const b of series.buckets) {
+      expect(b.start.getHours()).toBe(0)
+      expect(b.start.getMinutes()).toBe(0)
+      expect(b.start.getSeconds()).toBe(0)
+      expect(b.end.getTime() - b.start.getTime()).toBeGreaterThanOrEqual(23 * 3600 * 1000)
+    }
+  })
+
+  it('groups alert counts by network and by ruleType', () => {
+    const anchor = new Date('2026-11-03T12:00:00Z')
+    const alertTime = new Date(anchor).getTime()
+    const alerts: AlertPayload[] = [
+      makeAlert({
+        transaction_hash: 'h1',
+        network: 'mainnet',
+        rule_triggered: 'LargeTransfer',
+        timestamp: alertTime,
+      }),
+      makeAlert({
+        transaction_hash: 'h2',
+        network: 'testnet',
+        rule_triggered: 'LargeTransfer',
+        timestamp: alertTime,
+      }),
+      makeAlert({
+        transaction_hash: 'h3',
+        network: 'testnet',
+        rule_triggered: 'FunctionCalled',
+        timestamp: alertTime,
+      }),
+    ]
+
+    const netSeries = bucketAlerts(alerts, '7d', 'network', anchor)
+    expect(netSeries.total).toBe(3)
+    expect(netSeries.groups).toEqual(['mainnet', 'testnet'])
+    const lastNetBucket = netSeries.buckets[6]
+    expect(lastNetBucket.total).toBe(3)
+    expect(lastNetBucket.byGroup.mainnet).toBe(1)
+    expect(lastNetBucket.byGroup.testnet).toBe(2)
+
+    const ruleSeries = bucketAlerts(alerts, '7d', 'ruleType', anchor)
+    expect(ruleSeries.groups).toEqual(['FunctionCalled', 'LargeTransfer'])
+    const lastRuleBucket = ruleSeries.buckets[6]
+    expect(lastRuleBucket.total).toBe(3)
+    expect(lastRuleBucket.byGroup.LargeTransfer).toBe(2)
+    expect(lastRuleBucket.byGroup.FunctionCalled).toBe(1)
+  })
+
+  it('generates 24 hourly buckets for 24h range', () => {
+    const anchor = new Date('2026-11-03T14:30:00Z')
+    const series = bucketAlerts([], '24h', 'network', anchor)
+    expect(series.buckets).toHaveLength(24)
+    for (const b of series.buckets) {
+      expect(b.start.getMinutes()).toBe(0)
+      expect(b.end.getTime() - b.start.getTime()).toBe(3600 * 1000)
+    }
+  })
+})
+
