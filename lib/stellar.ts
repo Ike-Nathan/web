@@ -1,5 +1,4 @@
 import { Network } from '@/types'
-import { Address, xdr } from '@stellar/stellar-sdk'
 import { StrKey } from '@stellar/stellar-sdk'
 import { classifyHost } from '@/lib/ipRanges'
 import { sorobanRpcUrl } from './networkUrls.mjs'
@@ -15,6 +14,27 @@ export {
   explorerTxUrl,
   explorerContractUrl,
 } from './explorer'
+export const STELLAR_EXPERT_BASE = 'https://stellar.expert/explorer'
+
+export function resolveExplorerNetwork(network?: string): string {
+  if (!network) return 'public'
+  const lower = network.toLowerCase()
+  if (lower === 'mainnet') return 'public'
+  return lower
+}
+
+export function explorerTxUrl(network: Network | string, txHash: string): string {
+  const net = resolveExplorerNetwork(network)
+  return `${STELLAR_EXPERT_BASE}/${net}/tx/${txHash}`
+}
+
+export function explorerContractUrl(
+  network: Network | string,
+  contractId: string
+): string {
+  const net = resolveExplorerNetwork(network)
+  return `${STELLAR_EXPERT_BASE}/${net}/contract/${contractId}`
+}
 
 /**
  * Maps Freighter network strings (e.g. PUBLIC, TESTNET, FUTURENET) to the app Network type (#8).
@@ -141,76 +161,6 @@ export function nonContractAddressHint(input: string): string | null {
     // not a StrKey
   }
   return null
-}
-
-function buildContractInstanceLedgerKey(contractId: string): string {
-  try {
-    const address = Address.fromString(contractId)
-    const durability = xdr.ContractDataDurability.persistent()
-    const ledgerKey = xdr.LedgerKey.contractData(
-      new xdr.LedgerKeyContractData({
-        contract: address.toScAddress(),
-        key: xdr.ScVal.scvLedgerKeyContractInstance(),
-        durability,
-      })
-    )
-    return ledgerKey.toXDR('base64')
-  } catch {
-    return ''
-  }
-}
-
-/**
- * Checks whether a contract exists on the target network via Soroban RPC (#17).
- * Gracefully resolves true if RPC times out or is unreachable.
- */
-export async function contractExists(
-  network: Network,
-  contractId: string,
-  timeoutMs = 5000
-): Promise<boolean> {
-  const url = sorobanRpcUrl(network)
-  const key = buildContractInstanceLedgerKey(contractId)
-  if (!key) return false
-
-  const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), timeoutMs)
-
-  try {
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'getLedgerEntries',
-        params: {
-          keys: [key],
-        },
-      }),
-      signal: controller.signal,
-    })
-
-    if (!res.ok) {
-      return true
-    }
-
-    const data = await res.json()
-    if (data?.error) {
-      return true
-    }
-
-    const entries = data?.result?.entries
-    if (Array.isArray(entries)) {
-      return entries.length > 0
-    }
-
-    return true
-  } catch {
-    return true
-  } finally {
-    clearTimeout(timeout)
-  }
 }
 
 export function isValidUrl(url: string): boolean {

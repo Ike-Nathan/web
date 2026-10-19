@@ -1,5 +1,5 @@
 import { apiFetch, isApiConfigured } from '@/lib/api'
-import { apiFetch } from '@/lib/api'
+import { getAlerts } from '@/lib/storage'
 import { validateContractEntry } from '@/lib/importSchema'
 import {
   FUNCTION_NAME_REGEX,
@@ -59,36 +59,44 @@ export function parseContractFilter(
 
 /**
  * Whether a contract has had an alert since local midnight.
- * Accepts the last-alert timestamp from the contract record; missing or
- * unparseable timestamps are treated as "no alert today".
+ * Uses stored alerts for the contract, falling back to lastAlertAt if present.
  */
 export function hasAlertSinceLocalMidnight(
   contract: WatchedContract,
   now: Date = new Date()
 ): boolean {
-  const raw = (contract as { lastAlertAt?: string | null }).lastAlertAt
-  if (!raw) return false
-  const ts = new Date(raw).getTime()
-  if (Number.isNaN(ts)) return false
   const midnight = new Date(
     now.getFullYear(),
     now.getMonth(),
     now.getDate()
   ).getTime()
+
+  try {
+    const alerts = getAlerts(contract.contract_id)
+    if (alerts && alerts.length > 0) {
+      return alerts.some((a) => a.timestamp >= midnight)
+    }
+  } catch {
+    // ignore
+  }
+
+  const raw = (contract as { lastAlertAt?: string | null }).lastAlertAt
+  if (!raw) return false
+  const ts = new Date(raw).getTime()
+  if (Number.isNaN(ts)) return false
   return ts >= midnight
 }
 
 /**
- * Whether a contract has at least one active webhook configured.
+ * Whether a contract has an active webhook configured (enabled and has a webhook URL).
  */
 export function hasActiveWebhooks(contract: WatchedContract): boolean {
-  const webhooks = (contract as { webhooks?: unknown }).webhooks
-  if (!Array.isArray(webhooks)) return false
-  return webhooks.some((hook) => {
-    if (!hook || typeof hook !== 'object') return false
-    return (hook as { active?: boolean }).active !== false
-  })
+  const isEnabled = contract.enabled !== false && !(contract as { paused?: boolean }).paused
+  const hasUrl = Boolean(contract.webhook_url && contract.webhook_url.trim().length > 0)
+  return isEnabled && hasUrl
 }
+
+export const isActiveWebhook = hasActiveWebhooks
 
 /**
  * Apply a contracts-page filter to a list of contracts. Unknown filters

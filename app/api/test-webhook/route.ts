@@ -141,6 +141,7 @@ export async function POST(req: NextRequest) {
       status: res.status,
       ok: res.status >= 200 && res.status < 300,
       durationMs,
+      bodySnippet: res.bodySnippet,
     })
   } catch (error) {
     const durationMs = Date.now() - startTime

@@ -303,28 +303,49 @@ The `Test` button on the Add Contract form sends a mock payload to your endpoint
 
 ### Verifying webhook signatures
 
-Requests carry an `X-TxWatch-Signature: sha256=<hex>` header: the HMAC-SHA256 of the raw request body, keyed with your signing secret (generate one on the Add Contract form; it is shown once). Verify against the raw body, not re-serialised JSON:
+Requests carry an `X-TxWatch-Signature` header of the form `t=<unix seconds>,v1=<hex>`, where `v1` is the HMAC-SHA256 of `<t>.<raw request body>`, keyed with your signing secret (generate one on the Add Contract form; it is shown once). Because the timestamp is signed, a captured delivery can't be replayed later: reject any signature older than your tolerance window (5 minutes is a good default). Verify against the raw body, not re-serialised JSON. During secret rotation the header may carry more than one `v1` entry; accept the request if any of them matches.
 
 ```js
 import crypto from 'node:crypto'
 
-function verify(rawBody, header, secret) {
-  const expected =
-    'sha256=' +
-    crypto.createHmac('sha256', secret).update(rawBody).digest('hex')
-  const a = Buffer.from(expected)
-  const b = Buffer.from(header ?? '')
-  return a.length === b.length && crypto.timingSafeEqual(a, b)
+const TOLERANCE_SECONDS = 300
+
+function verify(rawBody, header, secret, now = Math.floor(Date.now() / 1000)) {
+  const parts = (header ?? '').split(',').map((p) => p.trim().split('='))
+  const t = Number(parts.find(([k]) => k === 't')?.[1])
+  const sigs = parts.filter(([k]) => k === 'v1').map(([, v]) => v)
+  if (!Number.isInteger(t) || sigs.length === 0) return false
+  if (Math.abs(now - t) > TOLERANCE_SECONDS) return false // stale: possible replay
+
+  const expected = crypto
+    .createHmac('sha256', secret)
+    .update(`${t}.${rawBody}`)
+    .digest()
+  return sigs.some((sig) => {
+    const b = Buffer.from(sig, 'hex')
+    return b.length === expected.length && crypto.timingSafeEqual(b, expected)
+  })
 }
 ```
 
 ```python
-import hmac, hashlib
+import hmac, hashlib, time
+
+TOLERANCE_SECONDS = 300
 
 def verify(raw_body: bytes, header: str, secret: str) -> bool:
-    expected = "sha256=" + hmac.new(secret.encode(), raw_body, hashlib.sha256).hexdigest()
-    return hmac.compare_digest(expected, header or "")
+    parts = [p.strip().split("=", 1) for p in (header or "").split(",") if "=" in p]
+    t = next((v for k, v in parts if k == "t"), None)
+    sigs = [v for k, v in parts if k == "v1"]
+    if t is None or not t.isdigit() or not sigs:
+        return False
+    if abs(time.time() - int(t)) > TOLERANCE_SECONDS:
+        return False  # stale: possible replay
+    expected = hmac.new(secret.encode(), t.encode() + b"." + raw_body, hashlib.sha256).hexdigest()
+    return any(hmac.compare_digest(expected, s) for s in sigs)
 ```
+
+The dashboard's own helper, `verifyWebhookSignature` in [`lib/webhookSignature.ts`](lib/webhookSignature.ts), implements the same check.
 
 ## CI
 
