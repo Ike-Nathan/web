@@ -8,96 +8,9 @@ import ContractCard from '@/components/ContractCard'
 import EmptyState from '@/components/EmptyState'
 import NetworkBadge from '@/components/NetworkBadge'
 import DashboardSkeleton from '@/components/DashboardSkeleton'
+import AlertActivityChart from '@/components/AlertActivityChart'
+import { getLatestAlertTimestamps } from '@/lib/alertSource'
 import { Network, AlertPayload } from '@/types'
-
-const DAY_MS = 24 * 60 * 60 * 1000
-const HOUR_MS = 60 * 60 * 1000
-
-interface AlertBucket {
-  label: string
-  count: number
-}
-
-function bucketAlerts(alerts: AlertPayload[], now: number, bucketMs: number, bucketCount: number): AlertBucket[] {
-  const buckets: AlertBucket[] = []
-  for (let i = bucketCount - 1; i >= 0; i--) {
-    const start = now - (i + 1) * bucketMs
-    const end = now - i * bucketMs
-    const count = alerts.filter((a) => a.timestamp > start && a.timestamp <= end).length
-    const date = new Date(end)
-    const label =
-      bucketMs === DAY_MS
-        ? date.toLocaleDateString(undefined, { weekday: 'short' })
-        : date.toLocaleTimeString(undefined, { hour: 'numeric' })
-    buckets.push({ label, count })
-  }
-  return buckets
-}
-
-function AlertActivityChart({ title, buckets }: { title: string; buckets: AlertBucket[] }) {
-  const max = Math.max(1, ...buckets.map((b) => b.count))
-  const width = 320
-  const height = 120
-  const gap = 6
-  const barWidth = (width - gap * (buckets.length - 1)) / buckets.length
-
-  return (
-    <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5">
-      <h2 className="text-sm font-semibold text-zinc-200">{title}</h2>
-      <svg
-        role="img"
-        aria-label={`${title} bar chart`}
-        viewBox={`0 0 ${width} ${height}`}
-        className="mt-4 w-full h-32"
-        preserveAspectRatio="none"
-      >
-        {buckets.map((bucket, i) => {
-          const barHeight = (bucket.count / max) * (height - 20)
-          const x = i * (barWidth + gap)
-          const y = height - barHeight
-          return (
-            <g key={i}>
-              <rect
-                x={x}
-                y={y}
-                width={barWidth}
-                height={barHeight}
-                rx={2}
-                className="fill-indigo-500"
-              />
-              <text
-                x={x + barWidth / 2}
-                y={height - 4}
-                textAnchor="middle"
-                className="fill-zinc-500"
-                fontSize={9}
-              >
-                {bucket.label}
-              </text>
-            </g>
-          )
-        })}
-      </svg>
-      <table className="sr-only">
-        <caption>{title}</caption>
-        <thead>
-          <tr>
-            <th scope="col">Period</th>
-            <th scope="col">Alerts</th>
-          </tr>
-        </thead>
-        <tbody>
-          {buckets.map((bucket, i) => (
-            <tr key={i}>
-              <th scope="row">{bucket.label}</th>
-              <td>{bucket.count}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  )
-}
 
 const DASHBOARD_CARD_LIMIT = 6
 
@@ -119,14 +32,9 @@ export default function DashboardPage() {
     setMounted(true)
   }, [contracts])
 
-  const now = Date.now()
-  const dailyBuckets = useMemo(
-    () => bucketAlerts(allAlerts, now, DAY_MS, 7),
-    [allAlerts, now]
-  )
-  const hourlyBuckets = useMemo(
-    () => bucketAlerts(allAlerts, now, HOUR_MS, 24),
-    [allAlerts, now]
+  const latestAlerts = useMemo(
+    () => getLatestAlertTimestamps(allAlerts),
+    [allAlerts]
   )
 
   useEffect(() => {
@@ -162,20 +70,17 @@ export default function DashboardPage() {
     .filter((network) => networkCounts[network])
     .map((network) => ({ network, count: networkCounts[network] }))
 
-  function lastAlertTime(contractId: string): number | undefined {
-    const alerts = getAlerts(contractId)
-    return alerts[0]?.timestamp
-  }
-
   if (!mounted) return <DashboardSkeleton />
 
   // Sort by most recent alert (descending), then by label (ascending).
-  const sortedContracts = [...contracts].sort((a, b) => {
-    const aAlert = lastAlertTime(a.contract_id) ?? 0
-    const bAlert = lastAlertTime(b.contract_id) ?? 0
-    if (bAlert !== aAlert) return bAlert - aAlert
-    return a.label.localeCompare(b.label)
-  })
+  const sortedContracts = useMemo(() => {
+    return [...contracts].sort((a, b) => {
+      const aAlert = latestAlerts[`${a.network}:${a.contract_id}`] ?? latestAlerts[a.contract_id] ?? 0
+      const bAlert = latestAlerts[`${b.network}:${b.contract_id}`] ?? latestAlerts[b.contract_id] ?? 0
+      if (bAlert !== aAlert) return bAlert - aAlert
+      return a.label.localeCompare(b.label)
+    })
+  }, [contracts, latestAlerts])
 
   const visibleContracts = sortedContracts.slice(0, DASHBOARD_CARD_LIMIT)
   const hasMoreContracts = sortedContracts.length > DASHBOARD_CARD_LIMIT
@@ -230,10 +135,7 @@ export default function DashboardPage() {
       </div>
 
       {/* Alert activity charts */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <AlertActivityChart title="Alerts (last 7 days)" buckets={dailyBuckets} />
-        <AlertActivityChart title="Alerts (last 24 hours)" buckets={hourlyBuckets} />
-      </div>
+      <AlertActivityChart alerts={allAlerts} />
 
       {/* Contract cards */}
       <div>
@@ -262,7 +164,11 @@ export default function DashboardPage() {
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
             {visibleContracts.map((c) => (
-              <ContractCard key={c.id} contract={c} lastAlertTime={lastAlertTime(c.contract_id)} />
+              <ContractCard
+                key={c.id}
+                contract={c}
+                lastAlertTime={latestAlerts[`${c.network}:${c.contract_id}`] ?? latestAlerts[c.contract_id]}
+              />
             ))}
           </div>
         )}
