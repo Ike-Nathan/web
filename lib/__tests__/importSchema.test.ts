@@ -1,6 +1,8 @@
+import { StrKey } from '@stellar/stellar-sdk'
 import { buildSnapshot, parseImport, validateContractEntry } from '../importSchema'
 
-const CID = 'C' + 'A'.repeat(55)
+// A checksum-valid contract StrKey (all-zero hash).
+const CID = StrKey.encodeContract(Buffer.alloc(32))
 const good = {
   id: 'c1',
   label: 'Alpha',
