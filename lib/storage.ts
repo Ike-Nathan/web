@@ -368,10 +368,14 @@ export function deleteAlert(alertId: string) {
   )
 }
 
-export function getAlerts(contractId: string): AlertPayload[] {
-  return load<AlertPayload>(ALERTS_KEY)
-    .filter((a) => a.contract_id === contractId)
-    .sort((a, b) => b.timestamp - a.timestamp)
+export function getAllAlerts(): AlertPayload[] {
+  return load<AlertPayload>(ALERTS_KEY).sort((a, b) => b.timestamp - a.timestamp)
+}
+
+export function getAlerts(contractId?: string): AlertPayload[] {
+  const all = load<AlertPayload>(ALERTS_KEY)
+  const filtered = contractId ? all.filter((a) => a.contract_id === contractId) : all
+  return filtered.sort((a, b) => b.timestamp - a.timestamp)
 }
 
 export function getLatestAlert(contractId: string): AlertPayload | undefined {
