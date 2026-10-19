@@ -1,4 +1,4 @@
-import { horizonUrl, sorobanRpcUrl } from './lib/networkUrls.mjs'
+import { networkOrigins } from './lib/networkUrls.mjs'
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
@@ -15,13 +15,7 @@ const nextConfig = {
         : []
     // #118: Build CSP with support for Freighter and configured API/RPC hosts
     const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'https://api.example.com'
-    const networks = ['mainnet', 'testnet', 'futurenet']
-    const networkOrigins = networks.flatMap((network) => [
-      new URL(horizonUrl(network)).origin,
-      new URL(sorobanRpcUrl(network)).origin,
-    ])
-
-    const cspAllowList = ["'self'", new URL(apiUrl).origin, ...networkOrigins]
+    const cspAllowList = ["'self'", new URL(apiUrl).origin, ...networkOrigins()]
       .filter((d, i, a) => a.indexOf(d) === i) // deduplicate
       .join(' ')
 
