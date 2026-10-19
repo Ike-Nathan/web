@@ -8,7 +8,7 @@
  * file is opened in Excel, Sheets or similar spreadsheet software.
  */
 
-const FORMULA_TRIGGERS = ['=', '+', '-', '@', '\t', '\r'];
+const FORMULA_TRIGGERS = ['=', '+', '-', '@', '\t', '\r']
 
 /**
  * Escape a single CSV cell value.
@@ -17,14 +17,14 @@ const FORMULA_TRIGGERS = ['=', '+', '-', '@', '\t', '\r'];
  * - Values starting with a formula trigger are prefixed with a single quote.
  * - The result is always wrapped in double quotes.
  */
-export function escapeCSVCell(value: unknown): string {
-  let str = value === null || value === undefined ? '' : String(value);
+function escapeCSVCell(value: unknown): string {
+  let str = value === null || value === undefined ? '' : String(value)
 
   if (str.length > 0 && FORMULA_TRIGGERS.includes(str[0])) {
-    str = `'${str}`;
+    str = `'${str}`
   }
 
-  return `"${str.replace(/"/g, '""')}"`;
+  return `"${str.replace(/"/g, '""')}"`
 }
 
 /**
@@ -39,13 +39,13 @@ export function buildCSV(
   rows: unknown[][],
   delimiter = ','
 ): string {
-  const lines: string[] = [];
+  const lines: string[] = []
 
-  lines.push(headers.map(escapeCSVCell).join(delimiter));
+  lines.push(headers.map(escapeCSVCell).join(delimiter))
 
   for (const row of rows) {
-    lines.push(row.map(escapeCSVCell).join(delimiter));
+    lines.push(row.map(escapeCSVCell).join(delimiter))
   }
 
-  return lines.join('\r\n');
+  return lines.join('\r\n')
 }

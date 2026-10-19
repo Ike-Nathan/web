@@ -9,6 +9,15 @@ import { addContract, saveContract, getContracts } from '@/lib/storage'
 import { generateWebhookSecret } from '@/lib/webhookSignature'
 import { buildTestWebhookPayload, sendTestWebhook } from '@/lib/api'
 import { generateId } from '@/lib/id'
+import { useState, useRef, useEffect, useMemo, useCallback } from 'react'
+import { useRouter } from 'next/navigation'
+import { AlertPayload, AlertRule, Network, WatchedContract } from '@/types'
+import { isValidContractId, isValidUrl, normalizeContractId, contractExists } from '@/lib/stellar'
+import { syncSaveContract } from '@/lib/contractSync'
+import { getContracts } from '@/lib/storage'
+import { buildTestWebhookPayload, describeRule, sendTestWebhook } from '@/lib/api'
+import { generateId } from '@/lib/id'
+import { isNetworkMatch } from '@/lib/freighter'
 import ContractVerification from '@/components/ContractVerification'
 import { useFreighterConnection } from '@/lib/useFreighterConnection'
 import { useNetworkMismatchWarning } from '@/lib/useNetworkMismatchWarning'
@@ -30,7 +39,11 @@ export default function NewContractPage() {
   const router = useRouter()
   const { showToast } = useToast()
   const { isConnected } = useFreighterConnection()
+  
+  const [networkWarning, setNetworkWarning] = useState<string | null>(null)
+  const [hasNetworkMismatch, setHasNetworkMismatch] = useState(false)
   const [mismatchAcknowledged, setMismatchAcknowledged] = useState(false)
+  
   const [label, setLabel] = useState('')
   const [labelWarning, setLabelWarning] = useState<string | null>(null)
   const [contractId, setContractId] = useState('')
@@ -39,13 +52,26 @@ export default function NewContractPage() {
   const [webhookSecret, setWebhookSecret] = useState('')
   const [rules, setRules] = useState<AlertRule[]>([])
   const [selectedRuleIndex, setSelectedRuleIndex] = useState<number>(0)
+  
   const [errors, setErrors] = useState<FormErrors>({})
   const [saving, setSaving] = useState(false)
   const [isCheckingContract, setIsCheckingContract] = useState(false)
   const [contractNotFoundWarning, setContractNotFoundWarning] = useState<string | null>(null)
   const [overrideNotFound, setOverrideNotFound] = useState(false)
   const [showDiscardModal, setShowDiscardModal] = useState(false)
+  
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  
+  // Test payload state
+  const [testRuleIndex, setTestRuleIndex] = useState(0)
+  const [testStatus, setTestStatus] = useState<'idle' | 'sending' | 'ok' | 'error'>('idle')
+  const [testError, setTestError] = useState<string | null>(null)
+  const [showPayloadPreview, setShowPayloadPreview] = useState(false)
+  const testAbortRef = useRef<AbortController | null>(null)
+
+  // Draft Restoration State
+  const [draftExists, setDraftExists] = useState(false)
+  const DRAFT_KEY = 'txwatch_new_contract_draft'
 
   // Warns on mount, on network change, and after connecting, not only when the
   // network <select> changes.
@@ -57,6 +83,45 @@ export default function NewContractPage() {
   const isDirty = Boolean(
     label.trim() || contractId.trim() || webhookUrl.trim() || webhookSecret.trim() || rules.length > 0
   )
+
+  useEffect(() => {
+    if (sessionStorage.getItem(DRAFT_KEY) && !isDirty) {
+      setDraftExists(true)
+    }
+  }, [isDirty])
+
+  useEffect(() => {
+    if (isDirty && !saving) {
+      const timer = setTimeout(() => {
+        sessionStorage.setItem(DRAFT_KEY, JSON.stringify({
+          label, contract_id: contractId, network, webhook_url: webhookUrl, rules
+        }))
+      }, 500)
+      return () => clearTimeout(timer)
+    }
+  }, [label, contractId, network, webhookUrl, rules, isDirty, saving])
+
+  function restoreDraft() {
+    try {
+      const draft = JSON.parse(sessionStorage.getItem(DRAFT_KEY)!)
+      setLabel(draft.label || '')
+      setContractId(draft.contract_id || '')
+      setNetwork(draft.network || 'testnet')
+      setWebhookUrl(draft.webhook_url || '')
+      setRules(draft.rules || [])
+    } catch {}
+    setDraftExists(false)
+  }
+
+  function discardDraft() {
+    sessionStorage.removeItem(DRAFT_KEY)
+    setDraftExists(false)
+    setLabel('')
+    setContractId('')
+    setWebhookUrl('')
+    setRules([])
+    setErrors({})
+  }
 
   useEffect(() => {
     return () => {
@@ -97,13 +162,29 @@ export default function NewContractPage() {
       navigateBack()
     }
   }
+
+  const testRule: AlertRule | undefined =
+    rules[testRuleIndex] ?? (rules.length > 0 ? rules[0] : undefined)
+
+  const testPayload = useMemo<AlertPayload>(
+    () =>
+      buildTestWebhookPayload({
+        contractId: contractId.trim() || 'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+        network,
+        rule: testRule,
+      }),
+    [contractId, network, testRule]
+  )
+
+  useEffect(() => () => testAbortRef.current?.abort(), [])
+
+  const { checkNetworkMismatch, clearNetworkWarning } = useNetworkMismatchWarning(network, isConnected)
+
   const labelInputRef = useRef<HTMLInputElement>(null)
   const contractIdInputRef = useRef<HTMLInputElement>(null)
   const webhookUrlInputRef = useRef<HTMLInputElement>(null)
   const rulesRef = useRef<HTMLDivElement>(null)
 
-  // Pre-fill from a "Duplicate Contract" action. Data is passed via
-  // sessionStorage (never the URL) so the webhook URL is not leaked.
   useEffect(() => {
     let raw: string | null = null
     try {
@@ -124,6 +205,7 @@ export default function NewContractPage() {
       if (Array.isArray(data.rules)) setRules(data.rules)
     } catch {
       // ignore malformed pre-fill data
+      // ignore
     }
   }, [])
 
@@ -137,6 +219,7 @@ export default function NewContractPage() {
     setErrors((prev) => ({ ...prev, wallet: undefined }))
     // The wallet's network is only knowable once it is connected.
     void checkNetworkMismatch(network)
+    checkNetworkMismatch(network)
   }
 
   function handleWalletDisconnect() {
@@ -160,7 +243,6 @@ export default function NewContractPage() {
     } else if (!isValidContractId(trimmedContractId)) {
       e.contract_id = 'Must be a valid Soroban contract address (starts with C, 56 chars)'
     } else {
-      // Check for duplicate contract_id + network combination
       const isDuplicate = getContracts().some(
         (c) => c.contract_id === trimmedContractId && c.network === network
       )
@@ -271,7 +353,6 @@ export default function NewContractPage() {
       return
     }
 
-    // If contract does not exist on network and user has not checked override, prevent saving and warn
     if (!overrideNotFound) {
       setIsCheckingContract(true)
       const exists = await contractExists(network, contractId.trim())
@@ -292,23 +373,31 @@ export default function NewContractPage() {
       webhook_url: webhookUrl.trim(),
       created_at: Date.now(),
       updated_at: Date.now(),
+      enabled: true,
     }
-    await syncSaveContract(contract, true)
-    addContract(contract)
-    if (!saveContract(contract)) {
+    
+    const { saved, sync } = syncSaveContract(contract, true)
+    if (!saved) {
       setSaving(false)
-      showToast('Could not save contract: browser storage is full or unavailable.', 'error')
+      showToast('Could not save contract: browser storage is full or conflict occurred.', 'error')
       return
     }
+
+    sessionStorage.removeItem(DRAFT_KEY)
+
     try {
       sessionStorage.setItem('txwatch_last_created_contract', contract.id)
     } catch {
-      // ignore storage errors
+      // ignore
     }
+    
     showToast(`Contract "${contract.label}" saved successfully!`, 'success')
     saveTimeoutRef.current = setTimeout(() => {
       router.push(`/contracts/${contract.id}`)
     }, 1500)
+
+    const result = await sync
+    if (!result.ok) showToast(result.error || 'API Sync Error', 'error')
   }
 
   async function handleTestWebhook() {
@@ -330,6 +419,31 @@ export default function NewContractPage() {
       payload,
       secret: webhookSecret || undefined,
     })
+
+    testAbortRef.current?.abort()
+    const controller = new AbortController()
+    testAbortRef.current = controller
+
+    setTestStatus('sending')
+    setTestError(null)
+
+    try {
+      const res = await sendTestWebhook(url, {
+        payload: testPayload,
+        signalOrTimeoutMs: controller.signal,
+        secret: webhookSecret || undefined,
+      })
+      if (res.ok) {
+        setTestStatus('ok')
+      } else {
+        setTestStatus('error')
+        setTestError(`Delivery failed with HTTP status ${res.status}`)
+      }
+    } catch (err: any) {
+      if (err?.name === 'AbortError') return
+      setTestStatus('error')
+      setTestError(err?.message || 'Failed to send test webhook')
+    }
   }
 
   return (
@@ -361,7 +475,23 @@ export default function NewContractPage() {
           </div>
         </div>
       )}
+      
       <div className="max-w-2xl mx-auto space-y-8">
+        
+        {draftExists && (
+          <div className="p-4 mb-4 bg-indigo-500/10 border border-indigo-500/30 rounded-lg flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+            <span className="text-sm text-indigo-200">You have an unsaved draft from a previous session.</span>
+            <div className="flex gap-2">
+              <button onClick={restoreDraft} className="px-3 py-1.5 text-sm bg-indigo-600 hover:bg-indigo-500 rounded text-white transition-colors">
+                Restore draft
+              </button>
+              <button onClick={discardDraft} className="px-3 py-1.5 text-sm border border-zinc-700 hover:bg-zinc-800 rounded text-zinc-300 transition-colors">
+                Start fresh
+              </button>
+            </div>
+          </div>
+        )}
+
         <div>
           <h1 className="text-2xl font-bold text-zinc-100">Add Contract</h1>
           <p className="text-sm text-zinc-500 mt-1">Register a Soroban contract to monitor</p>
@@ -450,6 +580,7 @@ export default function NewContractPage() {
                 const n = e.target.value as Network
                 setNetwork(n)
                 setErrors((prev) => ({ ...prev, network: undefined }))
+                checkNetworkMismatch(n)
                 setContractNotFoundWarning(null)
                 void checkNetworkMismatch(n)
                 if (isValidContractId(contractId.trim())) {
@@ -505,6 +636,41 @@ export default function NewContractPage() {
             <RuleBuilder rules={rules} onChange={setRules} />
             {errors.rules && <p className="text-xs text-red-400 mt-1">{errors.rules}</p>}
           </div>
+          {/* Test Payload Rule Selection and Preview (#24) */}
+          {webhookUrl && (
+            <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-3 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-medium text-zinc-300">Simulate Rule in Test Payload</span>
+                <button
+                  type="button"
+                  onClick={() => setShowPayloadPreview(!showPayloadPreview)}
+                  className="text-xs text-indigo-400 hover:text-indigo-300 transition-colors"
+                >
+                  {showPayloadPreview ? 'Hide Preview' : 'Preview JSON'}
+                </button>
+              </div>
+              {rules.length > 0 ? (
+                <select
+                  value={testRuleIndex}
+                  onChange={(e) => setTestRuleIndex(Number(e.target.value))}
+                  className="w-full bg-zinc-950 border border-zinc-700 rounded px-2.5 py-1.5 text-xs text-zinc-200"
+                >
+                  {rules.map((r, idx) => (
+                    <option key={r.id || idx} value={idx}>
+                      Rule #{idx + 1}: {describeRule(r)}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <p className="text-xs text-zinc-500">Defaulting to AnyTransaction test payload</p>
+              )}
+              {showPayloadPreview && (
+                <pre className="mt-2 p-2 rounded bg-zinc-950 border border-zinc-800 text-[11px] text-zinc-300 overflow-x-auto">
+                  {JSON.stringify(testPayload, null, 2)}
+                </pre>
+              )}
+            </div>
+          )}
 
           {/* Wallet */}
           {!isConnected && (
@@ -540,6 +706,43 @@ export default function NewContractPage() {
             onError={(field, message) => setErrors((prev) => ({ ...prev, [field]: message }))}
             className="mt-0"
           />
+
+          {/* Rules */}
+          <div ref={rulesRef}>
+            <label className="block text-sm font-medium text-zinc-300 mb-1.5">Alert Rules</label>
+            <RuleBuilder rules={rules} onChange={setRules} />
+            {errors.rules && <p className="text-xs text-red-400 mt-1">{errors.rules}</p>}
+          </div>
+
+          <div className="flex items-center gap-3 pt-2">
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={saving || !isFormValid()}
+              className="flex-1 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium rounded-lg px-4 py-2.5 transition-colors"
+            >
+              {saving ? 'Saving…' : 'Save Contract'}
+            </button>
+            <button
+              type="button"
+              onClick={handleCancel}
+              className="px-4 py-2.5 rounded-lg border border-zinc-700 hover:border-zinc-500 text-sm text-zinc-400 hover:text-zinc-200 transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleTestWebhook}
+              disabled={testStatus === 'sending'}
+              className="bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 text-zinc-200 text-sm font-medium rounded-lg px-4 py-2.5 transition-colors"
+            >
+              {testStatus === 'sending' ? 'Testing…' : 'Test Webhook'}
+            </button>
+          </div>
+          
+          {testStatus === 'ok' && <p className="text-xs text-emerald-400">Webhook delivered successfully.</p>}
+          {testStatus === 'error' && <p className="text-xs text-red-400">{testError}</p>}
+          
         </div>
       </div>
     </>

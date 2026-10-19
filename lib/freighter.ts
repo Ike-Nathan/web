@@ -19,21 +19,21 @@ import {
   getNetworkDetails,
   isConnected,
   requestAccess,
-  signTransaction,
 } from '@stellar/freighter-api'
 
 import type { Network } from '@/types'
 
-export const FREIGHTER_INSTALL_URL = 'https://www.freighter.app/'
+const FREIGHTER_INSTALL_URL = 'https://www.freighter.app/'
 
-export const FREIGHTER_NOT_INSTALLED = 'Freighter not installed — install the extension and reload'
-export const FREIGHTER_CONNECTION_REJECTED = 'Connection rejected'
+const FREIGHTER_NOT_INSTALLED =
+  'Freighter not installed — install the extension and reload'
+const FREIGHTER_CONNECTION_REJECTED = 'Connection rejected'
 
 /** Upper bound for a single round trip to the extension. */
 const EXTENSION_TIMEOUT_MS = 2500
 
 /** Freighter network ids for the networks the dashboard supports. */
-export const FREIGHTER_NETWORK_BY_CHAIN: Record<Network, string> = {
+const FREIGHTER_NETWORK_BY_CHAIN: Record<Network, string> = {
   mainnet: 'PUBLIC',
   testnet: 'TESTNET',
   futurenet: 'FUTURENET',
@@ -48,7 +48,7 @@ export class FreighterUnavailableError extends Error {
 }
 
 /** The user declined the request, or the wallet refused to sign. */
-export class FreighterRejectedError extends Error {
+class FreighterRejectedError extends Error {
   constructor(message = FREIGHTER_CONNECTION_REJECTED) {
     super(message)
     this.name = 'FreighterRejectedError'
@@ -62,7 +62,10 @@ export interface FreighterSession {
   networkPassphrase: string
 }
 
-function withTimeout<T>(request: Promise<T>, ms: number = EXTENSION_TIMEOUT_MS): Promise<T> {
+function withTimeout<T>(
+  request: Promise<T>,
+  ms: number = EXTENSION_TIMEOUT_MS
+): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const timer = setTimeout(() => reject(new FreighterUnavailableError()), ms)
     request.then(
@@ -102,7 +105,7 @@ export function openFreighterInstallPage(): void {
 }
 
 /** True when the extension is installed and answering requests. */
-export async function isExtensionAvailable(): Promise<boolean> {
+async function isExtensionAvailable(): Promise<boolean> {
   try {
     const { error } = await withTimeout(isConnected())
     return !error
@@ -122,12 +125,22 @@ export async function getWalletNetwork(): Promise<string | null> {
 }
 
 /** True when the wallet is on the same network as the given chain. */
-export function isNetworkMatch(chain: Network, walletNetwork: string | null): boolean {
-  return walletNetwork !== null && walletNetwork === FREIGHTER_NETWORK_BY_CHAIN[chain]
+export function isNetworkMatch(
+  chain: Network,
+  walletNetwork: string | null
+): boolean {
+  return (
+    walletNetwork !== null &&
+    walletNetwork === FREIGHTER_NETWORK_BY_CHAIN[chain]
+  )
 }
 
-async function readNetworkDetails(): Promise<{ network: string; networkPassphrase: string }> {
-  const { network, networkPassphrase, error } = await withTimeout(getNetworkDetails())
+async function readNetworkDetails(): Promise<{
+  network: string
+  networkPassphrase: string
+}> {
+  const { network, networkPassphrase, error } =
+    await withTimeout(getNetworkDetails())
   if (error || !network) {
     throw new FreighterUnavailableError()
   }
@@ -151,10 +164,12 @@ export async function readFreighterConnection(): Promise<{
   } catch {
     return null
   }
-  if (!connected) return { publicKey: null, network: null, networkPassphrase: null }
+  if (!connected)
+    return { publicKey: null, network: null, networkPassphrase: null }
 
   const { address, error } = await withTimeout(getAddress())
-  if (error || !address) return { publicKey: null, network: null, networkPassphrase: null }
+  if (error || !address)
+    return { publicKey: null, network: null, networkPassphrase: null }
 
   try {
     const details = await readNetworkDetails()
@@ -178,31 +193,26 @@ export async function connectFreighter(): Promise<FreighterSession> {
   try {
     const result = await withTimeout(requestAccess())
     if (result.error) {
-      throw new FreighterRejectedError(apiErrorMessage(result.error, FREIGHTER_CONNECTION_REJECTED))
+      throw new FreighterRejectedError(
+        apiErrorMessage(result.error, FREIGHTER_CONNECTION_REJECTED)
+      )
     }
     if (!result.address) {
       throw new FreighterRejectedError()
     }
     address = result.address
   } catch (error) {
-    if (error instanceof FreighterRejectedError || error instanceof FreighterUnavailableError) {
+    if (
+      error instanceof FreighterRejectedError ||
+      error instanceof FreighterUnavailableError
+    ) {
       throw error
     }
-    throw new FreighterRejectedError(messageOf(error, FREIGHTER_CONNECTION_REJECTED))
+    throw new FreighterRejectedError(
+      messageOf(error, FREIGHTER_CONNECTION_REJECTED)
+    )
   }
 
   const details = await readNetworkDetails()
   return { publicKey: address, ...details }
-}
-
-/** Signs a base64 XDR envelope, returning the signed envelope. */
-export async function signWithFreighter(
-  transactionXdr: string,
-  options: { networkPassphrase: string; address?: string }
-): Promise<string> {
-  const { signedTxXdr, error } = await withTimeout(signTransaction(transactionXdr, options))
-  if (error || !signedTxXdr) {
-    throw new FreighterRejectedError(apiErrorMessage(error, 'Transaction signing was declined'))
-  }
-  return signedTxXdr
 }

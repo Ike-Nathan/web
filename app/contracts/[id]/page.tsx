@@ -6,8 +6,14 @@ import { WatchedContract, AlertPayload, AlertRule, isRuleEnabled } from '@/types
 import { syncSaveContract, syncDeleteContract } from '@/lib/contractSync'
 import { getContract, deleteContract, getAlerts, saveContract, seedMockAlerts, getContracts } from '@/lib/storage'
 import { truncateId, explorerContractUrl, isValidUrl, mapFreighterNetwork } from '@/lib/stellar'
+import { getContract, getAlerts, getContractByIdAndNetwork, getContracts } from '@/lib/storage'
+import { truncateId, explorerContractUrl, isValidUrl, mapFreighterNetwork } from '@/lib/stellar'
+import { formatDate, formatRelativeTime, formatRuleSummary, maskWebhookUrl } from '@/lib/format'
+import { useAnalytics } from '@/lib/useAnalytics'
+import { useNow } from '@/lib/useNow'
 import { formatDate, formatRuleSummary } from '@/lib/format'
 import { useAnalytics } from '@/lib/useAnalytics'
+import { useToast } from '@/components/ToastProvider'
 import NetworkBadge from '@/components/NetworkBadge'
 import NetworkEditField from '@/components/NetworkEditField'
 import AlertRuleBadge from '@/components/AlertRuleBadge'
@@ -22,6 +28,8 @@ import { useAlertSync } from '@/hooks/useAlertSync'
 export default function ContractDetailPage({ params }: { params: { id: string } }) {
   const router = useRouter()
   const { trackEvent } = useAnalytics()
+  const { showToast } = useToast()
+  const now = useNow(60_000)
   const [contract, setContract] = useState<WatchedContract | null>(null)
   const [alerts, setAlerts] = useState<AlertPayload[]>([])
   const [mounted, setMounted] = useState(false)
@@ -96,6 +104,7 @@ export default function ContractDetailPage({ params }: { params: { id: string } 
   }, [contract])
 
   function handleDelete() {
+    trackEvent('contract_deleted', { contractId: params.id })
     void syncDeleteContract(params.id)
     router.push('/contracts')
   }
@@ -107,25 +116,56 @@ export default function ContractDetailPage({ params }: { params: { id: string } 
     trackEvent('rule_edit_opened', { contractId: params.id, ruleCount: contract!.rules.length })
   }
 
-  function saveRules() {
+  async function saveRules() {
     if (editedRules.length === 0) { setRulesError('Add at least one rule'); return }
     const updated = { ...contract!, rules: editedRules }
-    void syncSaveContract(updated, false)
-    if (!saveContract(updated)) {
-      setRulesError('Could not save: browser storage is full or unavailable')
+    const { saved, syncPromise } = syncSaveContract(updated, false)
+    const { saved, sync } = syncSaveContract(updated, false)
+    if (!saved) {
+      setRulesError('Could not save: browser storage is full or conflict occurred')
       return
     }
     setContract(updated)
     setShowEditRules(false)
     trackEvent('rule_edit_saved', { contractId: params.id, ruleCount: editedRules.length })
+    
+    const result = await syncPromise
+    const result = await sync
+    if (!result.ok) showToast(result.error || 'API Sync Error', 'error')
   }
 
-  function toggleRule(index: number) {
+  async function toggleRule(index: number) {
     const rules = contract!.rules.map((r, i) => (i === index ? { ...r, enabled: !isRuleEnabled(r) } : r))
     const updated = { ...contract!, rules }
-    void syncSaveContract(updated, false)
-    if (!saveContract(updated)) return
+    const { saved, syncPromise } = syncSaveContract(updated, false)
+    if (!saved) return
     setContract(updated)
+
+    const result = await syncPromise
+    const { saved, sync } = syncSaveContract(updated, false)
+    if (!saved) return
+    setContract(updated)
+
+    const result = await sync
+    if (!result.ok) showToast(result.error || 'API Sync Error', 'error')
+  }
+
+  async function toggleContractPause() {
+    const isEnabled = contract?.enabled ?? true
+    const updated = { ...contract!, enabled: !isEnabled }
+    const { saved, syncPromise } = syncSaveContract(updated, false)
+    if (!saved) return
+    setContract(updated)
+
+    trackEvent(updated.enabled ? 'contract_resumed' : 'contract_paused', { contractId: params.id })
+
+    const result = await syncPromise
+    const { saved, sync } = syncSaveContract(updated, false)
+    if (!saved) return
+    setContract(updated)
+
+    const result = await sync
+    if (!result.ok) showToast(result.error || 'API Sync Error', 'error')
   }
 
   function hasUnsavedChanges(): boolean {
@@ -136,6 +176,7 @@ export default function ContractDetailPage({ params }: { params: { id: string } 
     if (hasUnsavedChanges()) {
       setShowUnsavedWarning(true)
     } else {
+      trackEvent('rule_edit_cancelled', { contractId: params.id })
       setShowEditRules(false)
     }
   }
@@ -143,9 +184,9 @@ export default function ContractDetailPage({ params }: { params: { id: string } 
   function confirmDiscard() {
     setShowUnsavedWarning(false)
     setShowEditRules(false)
+    trackEvent('rule_edit_cancelled', { contractId: params.id })
   }
 
-  // Metadata editing functions
   function openEditMetadata() {
     setEditedLabel(contract!.label)
     setEditedWebhookUrl(contract!.webhook_url)
@@ -156,56 +197,38 @@ export default function ContractDetailPage({ params }: { params: { id: string } 
     trackEvent('metadata_edit_opened', { contractId: params.id })
   }
 
-  function saveMetadata() {
-    // Validation
+  async function saveMetadata() {
     const trimmedLabel = editedLabel.trim()
     const trimmedWebhookUrl = editedWebhookUrl.trim()
 
-    if (!trimmedLabel) {
-      setMetadataError('Label is required')
-      return
-    }
-
-    if (trimmedLabel.length > 100) {
-      setMetadataError('Label must be 100 characters or less')
-      return
-    }
-
-    if (!trimmedWebhookUrl) {
-      setMetadataError('Webhook URL is required')
-      return
-    }
-
-    if (!isValidUrl(trimmedWebhookUrl)) {
-      setMetadataError('Please enter a valid HTTP or HTTPS URL')
-      return
-    }
+    if (!trimmedLabel) { setMetadataError('Label is required'); return }
+    if (trimmedLabel.length > 100) { setMetadataError('Label must be 100 characters or less'); return }
+    if (!trimmedWebhookUrl) { setMetadataError('Webhook URL is required'); return }
+    if (!isValidUrl(trimmedWebhookUrl)) { setMetadataError('Please enter a valid HTTP or HTTPS URL'); return }
 
     const networkChanged = editedNetwork !== contract!.network
 
-    // Duplicate contract_id + network check before saving a network switch
     if (networkChanged) {
-      const existing = getContract(contract!.contract_id)
-      if (existing && existing.network === editedNetwork) {
+      const existing = getContractByIdAndNetwork(contract!.contract_id, editedNetwork)
+      if (existing) {
         setMetadataError('A contract with this ID already exists on the selected network')
         return
       }
     }
 
-    // Save changes
     const updated = { 
       ...contract!, 
       label: trimmedLabel,
       webhook_url: trimmedWebhookUrl,
       network: editedNetwork
     }
-    void syncSaveContract(updated, false)
-    if (!saveContract(updated)) {
-      setMetadataError('Could not save: browser storage is full or unavailable')
+    const { saved, syncPromise } = syncSaveContract(updated, false)
+    const { saved, sync } = syncSaveContract(updated, false)
+    if (!saved) {
+      setMetadataError('Could not save: browser storage is full or conflict occurred')
       return
     }
 
-    // Alert history is cleared on network switch, matching the warning copy
     if (networkChanged) {
       setAlerts([])
       trackEvent('network_switched', { contractId: params.id, network: editedNetwork })
@@ -214,6 +237,10 @@ export default function ContractDetailPage({ params }: { params: { id: string } 
     setContract(updated)
     setShowEditMetadata(false)
     trackEvent('metadata_edit_saved', { contractId: params.id })
+
+    const result = await syncPromise
+    const result = await sync
+    if (!result.ok) showToast(result.error || 'API Sync Error', 'error')
   }
 
   function hasMetadataChanges(): boolean {
@@ -259,6 +286,8 @@ export default function ContractDetailPage({ params }: { params: { id: string } 
 
   if (!contract) return null
 
+  const isEnabled = contract.enabled ?? true
+
   return (
     <div className="space-y-8 max-w-4xl">
       {walletNetworkMismatch && (
@@ -293,6 +322,26 @@ export default function ContractDetailPage({ params }: { params: { id: string } 
           </div>
         </div>
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full sm:w-auto">
+          {/* Pause/Resume Switch */}
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-zinc-700 bg-zinc-900">
+            <span className="text-sm text-zinc-300 min-w-[3rem]">{isEnabled ? 'Active' : 'Paused'}</span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={isEnabled}
+              onClick={toggleContractPause}
+              className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 focus:ring-offset-zinc-900 ${
+                isEnabled ? 'bg-indigo-500' : 'bg-zinc-600'
+              }`}
+            >
+              <span
+                className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
+                  isEnabled ? 'translate-x-4' : 'translate-x-1'
+                }`}
+              />
+            </button>
+          </div>
+
           <button
             onClick={openEditMetadata}
             className="px-3 py-1.5 rounded-lg border border-zinc-700 hover:border-zinc-500 text-sm text-zinc-300 hover:text-zinc-100 transition-colors"
@@ -314,35 +363,45 @@ export default function ContractDetailPage({ params }: { params: { id: string } 
         </div>
       </div>
 
-      {/* Edit Details Modal */}
-      <Modal
-        open={showEditMetadata}
-        onClose={handleCancelMetadataEdit}
-        title="Edit Details"
-      >
-        <div className="space-y-4">
-          <div className="space-y-1">
-            <label htmlFor="edit-label" className="block text-sm font-medium text-zinc-300">
-              Label
-            </label>
-            <input
-              id="edit-label"
-              type="text"
-              value={editedLabel}
-              onChange={(e) => setEditedLabel(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg border border-zinc-700 bg-zinc-950 text-sm text-zinc-100 focus:outline-none focus:border-indigo-500"
-            />
-          </div>
-          <div className="space-y-1">
-            <label htmlFor="edit-webhook" className="block text-sm font-medium text-zinc-300">
-              Webhook URL
-            </label>
-            <input
-              id="edit-webhook"
-              type="text"
-              value={editedWebhookUrl}
-              onChange={(e) => setEditedWebhookUrl(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg border border-zinc-700 bg-zinc-950 text-sm text-zinc-100 focus:outline-none focus:border-indigo-500"
+      {/* Edit Details modal */}
+      {showEditMetadata && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <div className="w-full max-w-md rounded-xl border border-zinc-800 bg-zinc-900 p-6 space-y-4">
+            <h2 className="text-lg font-semibold text-zinc-100">Edit Details</h2>
+
+            <div className="space-y-1">
+              <label className="text-sm text-zinc-400">Label</label>
+              <input
+                value={editedLabel}
+                onChange={(e) => {
+                  const val = e.target.value
+                  setEditedLabel(val)
+                  const trimmed = val.trim().toLowerCase()
+                  if (trimmed && getContracts().some((c) => c.id !== contract?.id && c.label.trim().toLowerCase() === trimmed)) {
+                    setEditedLabelWarning('A contract with this label already exists')
+                  } else {
+                    setEditedLabelWarning(null)
+                  }
+                }}
+                className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100"
+              />
+              {editedLabelWarning && <p className="text-xs text-amber-400">{editedLabelWarning}</p>}
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-sm text-zinc-400">Webhook URL</label>
+              <input
+                value={editedWebhookUrl}
+                onChange={(e) => setEditedWebhookUrl(e.target.value)}
+                className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100"
+              />
+            </div>
+
+            <NetworkEditField
+              currentNetwork={editedNetwork}
+              onNetworkChange={setEditedNetwork}
+              value={editedNetwork}
+              onChange={setEditedNetwork}
             />
           </div>
           <NetworkEditField
@@ -370,62 +429,55 @@ export default function ContractDetailPage({ params }: { params: { id: string } 
             >
               Save
             </button>
+
+            {metadataError && (
+              <p className="text-sm text-red-400">{metadataError}</p>
+            )}
+
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                onClick={handleCancelMetadataEdit}
+                className="px-3 py-1.5 rounded-lg border border-zinc-700 text-sm text-zinc-300 hover:text-zinc-100 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={saveMetadata}
+                className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-sm font-medium text-white transition-colors"
+              >
+                Save
+              </button>
+            </div>
           </div>
         </div>
-      </Modal>
+      )}
 
       {/* Edit Rules Modal */}
-      <Modal
-        open={showEditRules}
-        onClose={handleCancelEdit}
-        title="Edit Rules"
-      >
-        <div className="space-y-4">
-          <RuleBuilder rules={editedRules} onChange={setEditedRules} />
-          {rulesError && (
-            <p className="text-sm text-red-400">{rulesError}</p>
-          )}
-          <div className="flex justify-end gap-2 pt-2">
-            <button
-              onClick={handleCancelEdit}
-              className="px-3 py-1.5 rounded-lg border border-zinc-700 hover:border-zinc-500 text-sm text-zinc-300 hover:text-zinc-100 transition-colors"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={saveRules}
-              className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-sm font-medium text-white transition-colors"
-            >
-              Save
-            </button>
-          </div>
-        </div>
-      </Modal>
-
-      {/* Discard Changes Modal */}
-      <Modal
-        open={showUnsavedWarning}
-        onClose={() => setShowUnsavedWarning(false)}
-        title="Discard Changes?"
-        destructive
-      >
-        <div className="space-y-4">
-          <p className="text-sm text-zinc-400">
-            You have unsaved changes. Are you sure you want to discard them?
-          </p>
-          <div className="flex justify-end gap-2 pt-2">
-            <button
-              onClick={() => setShowUnsavedWarning(false)}
-              className="px-3 py-1.5 rounded-lg border border-zinc-700 hover:border-zinc-500 text-sm text-zinc-300 hover:text-zinc-100 transition-colors"
-            >
-              Keep Editing
-            </button>
-            <button
-              onClick={confirmDiscard}
-              className="px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-500 text-sm font-medium text-white transition-colors"
-            >
-              Discard
-            </button>
+      {showEditRules && (
+        <Modal
+          open={showEditRules}
+          onClose={handleCancelEdit}
+          title="Edit Rules"
+        >
+          <div className="space-y-4">
+            <RuleBuilder rules={editedRules} onChange={setEditedRules} />
+            {rulesError && (
+              <p className="text-sm text-red-400">{rulesError}</p>
+            )}
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                onClick={handleCancelEdit}
+                className="px-3 py-1.5 rounded-lg border border-zinc-700 hover:border-zinc-500 text-sm text-zinc-300 hover:text-zinc-100 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={saveRules}
+                className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-sm font-medium text-white transition-colors"
+              >
+                Save
+              </button>
+            </div>
           </div>
         </div>
       </Modal>
@@ -457,6 +509,8 @@ export default function ContractDetailPage({ params }: { params: { id: string } 
           </div>
         </div>
       </Modal>
+        </Modal>
+      )}
 
       {/* Registered card */}
       <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-5 space-y-3">
@@ -487,14 +541,17 @@ export default function ContractDetailPage({ params }: { params: { id: string } 
           <ul className="space-y-2">
             {contract.rules.map((rule, i) => (
               <li
+              <div
                 key={i}
                 data-testid="active-rule"
-                className={`flex items-center gap-2 bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 ${isRuleEnabled(rule) ? '' : 'opacity-50'}`}
+                className={`flex items-center justify-between bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 ${isRuleEnabled(rule) ? '' : 'opacity-50'}`}
               >
-                <AlertRuleBadge type={rule.type} />
-                {formatRuleSummary(rule) && (
-                  <span className="text-xs font-mono text-zinc-400">{formatRuleSummary(rule)}</span>
-                )}
+                <div className="flex items-center gap-2">
+                  <AlertRuleBadge type={rule.type} />
+                  {formatRuleSummary(rule) && (
+                    <span className="text-xs font-mono text-zinc-400">{formatRuleSummary(rule)}</span>
+                  )}
+                </div>
                 <button
                   type="button"
                   role="switch"
@@ -515,7 +572,7 @@ export default function ContractDetailPage({ params }: { params: { id: string } 
       <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-5 space-y-3">
         <h2 className="text-sm font-semibold text-zinc-300">Webhook</h2>
         <div className="flex items-center gap-2">
-          <span className="text-sm font-mono text-zinc-400 break-all">{contract.webhook_url}</span>
+          <span className="text-sm font-mono text-zinc-400 break-all">{maskWebhookUrl(contract.webhook_url)}</span>
           <CopyButton text={contract.webhook_url} />
         </div>
         <NotificationToggle />
@@ -523,6 +580,112 @@ export default function ContractDetailPage({ params }: { params: { id: string } 
 
       {/* Webhook log */}
       <WebhookLog alerts={alerts} network={contract.network} />
+      </div>
+
+      {/* Alerts */}
+      <div className="space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4">
+            <h2 className="text-lg font-semibold text-zinc-100">Alerts</h2>
+            {sync.enabled && (
+              <div className="flex items-center gap-2 text-xs bg-zinc-900/50 px-3 py-1.5 rounded-lg border border-zinc-800">
+                {sync.live ? (
+                  <span className="text-emerald-400 flex items-center gap-1.5" data-testid="sync-status-live">
+                    <span className="relative flex h-2 w-2">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                    </span>
+                    Live · synced {sync.lastSync ? formatRelativeTime(sync.lastSync, now) : 'just now'}
+                  </span>
+                ) : (
+                  <span className="text-red-400 flex items-center gap-1" data-testid="sync-status-error">
+                    <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    Sync failing
+                  </span>
+                )}
+                <div className="w-px h-3 bg-zinc-700 mx-1"></div>
+                <button 
+                  onClick={sync.syncNow} 
+                  className="text-zinc-400 hover:text-zinc-200 transition-colors font-medium" 
+                  data-testid="sync-now-button"
+                >
+                  Sync now
+                </button>
+              </div>
+            )}
+          </div>
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-semibold text-zinc-100">Alerts</h2>
+          <NotificationToggle contractId={contract.contract_id} />
+        </div>
+        {alerts.length === 0 ? (
+          <p className="text-sm text-zinc-500">No alerts yet.</p>
+        ) : (
+          <ul className="space-y-2">
+            {alerts.map((a) => (
+              <li key={a.id} className="rounded-lg border border-zinc-800 bg-zinc-900 p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <AlertRuleBadge rule={a.rule} />
+                  <span className="text-xs text-zinc-500">{formatDate(a.created_at)}</span>
+                </div>
+                <p className="mt-1 text-sm text-zinc-300">{formatRuleSummary(a.rule)}</p>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      {/* Webhook Log */}
+      <WebhookLog contractId={contract.contract_id} />
+      
+      {/* Modals continued */}
+      {showUnsavedWarning && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <div className="w-full max-w-sm rounded-xl border border-zinc-800 bg-zinc-900 p-5 space-y-4">
+            <h3 className="text-base font-semibold text-zinc-100">Discard unsaved changes?</h3>
+            <p className="text-sm text-zinc-400">Your rule edits will be lost.</p>
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setShowUnsavedWarning(false)}
+                className="px-3 py-1.5 rounded-lg border border-zinc-700 text-sm text-zinc-300 hover:text-zinc-100 transition-colors"
+              >
+                Keep editing
+              </button>
+              <button
+                onClick={confirmDiscard}
+                className="px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-500 text-sm font-medium text-white transition-colors"
+              >
+                Discard
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <div className="w-full max-w-sm rounded-xl border border-zinc-800 bg-zinc-900 p-5 space-y-4">
+            <h3 className="text-base font-semibold text-zinc-100">Delete contract?</h3>
+            <p className="text-sm text-zinc-400">This will remove the contract and its alert history.</p>
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setShowDelete(false)}
+                className="px-3 py-1.5 rounded-lg border border-zinc-700 text-sm text-zinc-300 hover:text-zinc-100 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDelete}
+                className="px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-500 text-sm font-medium text-white transition-colors"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

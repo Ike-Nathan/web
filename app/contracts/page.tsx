@@ -5,7 +5,7 @@ import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { WatchedContract, Network } from '@/types'
 import { getContracts, getAlerts, deleteContract } from '@/lib/storage'
-import { refreshContracts } from '@/lib/contractSync'
+import { refreshContracts, syncSaveContract } from '@/lib/contractSync'
 import ContractCard from '@/components/ContractCard'
 import EmptyState from '@/components/EmptyState'
 import ContractsSkeleton from '@/components/ContractsSkeleton'
@@ -121,13 +121,9 @@ export default function ContractsPage() {
     const all = getContracts()
     setAllContracts(all)
     setMounted(true)
-    // With NEXT_PUBLIC_API_URL set, the API is the source of truth.
     refreshContracts().then((r) => setAllContracts(r.contracts))
   }, [])
 
-  // Check for a recently-created contract id in sessionStorage and highlight it once.
-  // The page owns the single highlight timer; ContractCard no longer runs its own.
-  // Restore persisted view/sort preferences. URL params take precedence over stored prefs.
   useEffect(() => {
     const initial = resolveInitialPrefs({
       viewMode: searchParams?.get('view'),
@@ -137,7 +133,6 @@ export default function ContractsPage() {
     setSortBy(initial.sortBy)
   }, [searchParams])
 
-  // Check for a recently-created contract id in sessionStorage and highlight it once
   useEffect(() => {
     try {
       const id = sessionStorage.getItem('txwatch_last_created_contract')
@@ -151,7 +146,7 @@ export default function ContractsPage() {
         }, HIGHLIGHT_DURATION_MS)
       }
     } catch {
-      // ignore (server-side or storage issues)
+      // ignore
     }
     return () => {
       if (highlightTimer.current) {
@@ -197,7 +192,6 @@ export default function ContractsPage() {
     }
   }, [page, totalPages])
 
-  // Jump to the page that contains the newly created contract so it can be seen.
   useEffect(() => {
     if (!highlightedId) return
     const index = sorted.findIndex((contract) => contract.id === highlightedId)
@@ -206,7 +200,6 @@ export default function ContractsPage() {
     setPage((current) => (current === targetPage ? current : targetPage))
   }, [highlightedId, sorted])
 
-  // Scroll the highlighted card into view once it is rendered on the active page.
   useEffect(() => {
     if (!highlightedId) return
     const el = document.getElementById(`contract-${highlightedId}`)
@@ -274,6 +267,18 @@ export default function ContractsPage() {
     setAllContracts((prev) => prev.filter((contract) => !selectedIds.includes(contract.id)))
     setSelectedIds([])
     setConfirmOpen(false)
+    setSelectionMode(false)
+  }
+
+  const handlePauseSelected = () => {
+    for (const id of selectedIds) {
+      const contract = allContracts.find(c => c.id === id)
+      if (contract) {
+        syncSaveContract({ ...contract, enabled: false }, false)
+      }
+    }
+    setAllContracts((prev) => prev.map((c) => selectedIds.includes(c.id) ? { ...c, enabled: false } : c))
+    setSelectedIds([])
     setSelectionMode(false)
   }
 
@@ -366,6 +371,33 @@ export default function ContractsPage() {
             role="group"
             aria-label="View mode"
           >
+        <div className="flex items-center gap-2">
+          {hasAnyContracts && (
+            <div className="relative">
+              <select
+                value={sortBy}
+                onChange={(e) => {
+                  const next = e.target.value as SortOption
+                  setSortBy(next)
+                  writePrefs({ sortBy: next })
+                }}
+                className="appearance-none px-3 py-2 pr-8 rounded-lg bg-zinc-800 border border-zinc-700 text-sm font-medium text-zinc-200 hover:bg-zinc-700 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 cursor-pointer"
+              >
+                {SORT_OPTIONS.map(({ value, label }) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+              <span className="pointer-events-none absolute inset-y-0 right-2 flex items-center text-zinc-500">
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
+              </span>
+            </div>
+          )}
+
+          <div className="flex items-center gap-1 p-1 bg-zinc-900 border border-zinc-800 rounded-lg w-fit" role="group" aria-label="View mode">
             {VIEW_MODES.map((mode) => {
               const isActive = viewMode === mode
               return (
@@ -393,6 +425,7 @@ export default function ContractsPage() {
             type="button"
             onClick={toggleSelectionMode}
             className={`rounded-lg px-3 py-2 text-sm font-medium ${
+            className={`rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
               selectionMode
                 ? 'bg-indigo-600 text-white hover:bg-indigo-500'
                 : 'bg-zinc-800 text-zinc-100 hover:bg-zinc-700'
@@ -415,14 +448,24 @@ export default function ContractsPage() {
             </button>
             <span className="text-sm text-zinc-400">{selectedIds.length} selected</span>
           </div>
-          <button
-            type="button"
-            onClick={() => setConfirmOpen(true)}
-            disabled={selectedIds.length === 0}
-            className="rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-500 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            Delete selected
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handlePauseSelected}
+              disabled={selectedIds.length === 0}
+              className="rounded-lg bg-zinc-800 px-4 py-2 text-sm font-medium text-zinc-100 hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Pause selected
+            </button>
+            <button
+              type="button"
+              onClick={() => setConfirmOpen(true)}
+              disabled={selectedIds.length === 0}
+              className="rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-500 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Delete selected
+            </button>
+          </div>
         </div>
       )}
 
@@ -458,6 +501,9 @@ export default function ContractsPage() {
           ))}
         </div>
       ) : (
+          description="Try adjusting your search or filter."
+        />
+      ) : viewMode === 'grouped' ? (
         <div className="space-y-8">
           {(Object.keys(grouped) as Network[]).map((network) => {
             const contracts = grouped[network]
@@ -497,6 +543,17 @@ export default function ContractsPage() {
             Previous
           </button>
           <span className="text-sm text-zinc-400">
+      {viewMode === 'flat' && totalPages > 1 && (
+        <div className="flex items-center justify-center gap-2 mt-6">
+          <button
+            type="button"
+            onClick={() => setPage((p) => Math.max(1, p - 1))}
+            disabled={page === 1}
+            className="px-3 py-1.5 rounded-lg bg-zinc-800 text-sm text-zinc-200 hover:bg-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            Previous
+          </button>
+          <span className="text-sm text-zinc-500">
             Page {page} of {totalPages}
           </span>
           <button
@@ -504,6 +561,9 @@ export default function ContractsPage() {
             onClick={() => setPage((prev) => Math.min(totalPages, prev + 1))}
             disabled={page === totalPages}
             className="rounded-lg bg-zinc-800 px-3 py-2 text-sm text-zinc-100 hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-50"
+            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+            disabled={page === totalPages}
+            className="px-3 py-1.5 rounded-lg bg-zinc-800 text-sm text-zinc-200 hover:bg-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed"
           >
             Next
           </button>

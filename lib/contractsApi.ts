@@ -1,4 +1,5 @@
 import { apiFetch } from '@/lib/api'
+import { validateContractEntry } from '@/lib/importSchema'
 import {
   FUNCTION_NAME_REGEX,
   SOROBAN_SYMBOL_MAX_LENGTH,
@@ -18,7 +19,12 @@ import type { WatchedContract } from '@/types'
 
 // Function-name validation lives in lib/soroban.ts; re-exported here so
 // existing imports from '@/lib/contractsApi' keep working.
-export { FUNCTION_NAME_REGEX, SOROBAN_SYMBOL_MAX_LENGTH, isValidFunctionName, sanitizeAdminFunctionNames }
+export {
+  FUNCTION_NAME_REGEX,
+  SOROBAN_SYMBOL_MAX_LENGTH,
+  isValidFunctionName,
+  sanitizeAdminFunctionNames,
+}
 
 /**
  * Filter params supported by the contracts page. The dashboard stat tiles
@@ -27,7 +33,10 @@ export { FUNCTION_NAME_REGEX, SOROBAN_SYMBOL_MAX_LENGTH, isValidFunctionName, sa
  */
 export type ContractFilter = 'alerts-today' | 'webhooks'
 
-export const CONTRACT_FILTERS: readonly ContractFilter[] = ['alerts-today', 'webhooks']
+export const CONTRACT_FILTERS: readonly ContractFilter[] = [
+  'alerts-today',
+  'webhooks',
+]
 
 export const CONTRACT_FILTER_LABELS: Record<ContractFilter, string> = {
   'alerts-today': 'Alerts today',
@@ -38,7 +47,9 @@ export const CONTRACT_FILTER_LABELS: Record<ContractFilter, string> = {
  * Normalize an arbitrary `?filter=` value into a supported ContractFilter.
  * Returns null for missing/unknown values so callers can ignore them.
  */
-export function parseContractFilter(value: string | null | undefined): ContractFilter | null {
+export function parseContractFilter(
+  value: string | null | undefined
+): ContractFilter | null {
   if (!value) return null
   return (CONTRACT_FILTERS as readonly string[]).includes(value)
     ? (value as ContractFilter)
@@ -52,13 +63,17 @@ export function parseContractFilter(value: string | null | undefined): ContractF
  */
 export function hasAlertSinceLocalMidnight(
   contract: WatchedContract,
-  now: Date = new Date(),
+  now: Date = new Date()
 ): boolean {
   const raw = (contract as { lastAlertAt?: string | null }).lastAlertAt
   if (!raw) return false
   const ts = new Date(raw).getTime()
   if (Number.isNaN(ts)) return false
-  const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
+  const midnight = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate()
+  ).getTime()
   return ts >= midnight
 }
 
@@ -81,11 +96,13 @@ export function hasActiveWebhooks(contract: WatchedContract): boolean {
 export function applyContractFilter(
   contracts: WatchedContract[],
   filter: ContractFilter | null,
-  now: Date = new Date(),
+  now: Date = new Date()
 ): WatchedContract[] {
   if (!filter) return contracts
   if (filter === 'alerts-today') {
-    return contracts.filter((contract) => hasAlertSinceLocalMidnight(contract, now))
+    return contracts.filter((contract) =>
+      hasAlertSinceLocalMidnight(contract, now)
+    )
   }
   if (filter === 'webhooks') {
     return contracts.filter((contract) => hasActiveWebhooks(contract))
@@ -97,24 +114,46 @@ export function isApiConfigured(): boolean {
   return Boolean(process.env.NEXT_PUBLIC_API_URL)
 }
 
-export function listContracts(): Promise<WatchedContract[]> {
-  return apiFetch<WatchedContract[]>('/contracts')
+/**
+ * Rejects the whole list if any entry fails validation, so callers keep the
+ * local cache instead of replacing it with records that would later be dropped.
+ */
+export async function listContracts(): Promise<WatchedContract[]> {
+  const body = await apiFetch<unknown>('/contracts')
+  if (!Array.isArray(body))
+    throw new Error('Invalid contracts response: expected an array')
+  return body.map((entry, index) => {
+    const result = validateContractEntry(entry)
+    if (typeof result === 'string') {
+      throw new Error(`Invalid contracts response: entry ${index}: ${result}`)
+    }
+    return result
+  })
 }
 
-export function createContract(contract: WatchedContract): Promise<WatchedContract> {
+export function createContract(
+  contract: WatchedContract
+): Promise<WatchedContract> {
   return apiFetch<WatchedContract>('/contracts', {
     method: 'POST',
     body: JSON.stringify(contract),
   })
 }
 
-export function updateContract(contract: WatchedContract): Promise<WatchedContract> {
-  return apiFetch<WatchedContract>(`/contracts/${encodeURIComponent(contract.id)}`, {
-    method: 'PUT',
-    body: JSON.stringify(contract),
-  })
+export function updateContract(
+  contract: WatchedContract
+): Promise<WatchedContract> {
+  return apiFetch<WatchedContract>(
+    `/contracts/${encodeURIComponent(contract.id)}`,
+    {
+      method: 'PUT',
+      body: JSON.stringify(contract),
+    }
+  )
 }
 
 export function removeContract(id: string): Promise<void> {
-  return apiFetch<void>(`/contracts/${encodeURIComponent(id)}`, { method: 'DELETE' })
+  return apiFetch<void>(`/contracts/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  })
 }

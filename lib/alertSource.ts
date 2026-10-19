@@ -1,6 +1,6 @@
-import { apiFetch } from '@/lib/api'
+import { apiFetch, type ApiError } from '@/lib/api'
 import { addAlert, getAlerts } from '@/lib/storage'
-import type { AlertPayload, Network } from '@/types'
+import { isAlertRuleType, type AlertPayload, type Network } from '@/types'
 
 /**
  * Assumed tx-watch-core contract (not verified against a live core):
@@ -14,6 +14,9 @@ export interface FetchAlertsOptions {
 }
 
 export const ALERT_POLL_INTERVAL_MS = 30000
+/** Upper bound for the polling interval while the core keeps failing. */
+export const ALERT_POLL_MAX_INTERVAL_MS = 5 * 60 * 1000
+const ALERT_POLL_INTERVAL_MS = 30000
 
 export function isApiConfigured(): boolean {
   return Boolean(process.env.NEXT_PUBLIC_API_URL)
@@ -24,14 +27,63 @@ export async function fetchAlerts(
   network: Network | string,
   { since, signal }: FetchAlertsOptions = {}
 ): Promise<AlertPayload[]> {
-  const qs = new URLSearchParams({ contract_id: contractId, network: String(network) })
+  const qs = new URLSearchParams({
+    contract_id: contractId,
+    network: String(network),
+  })
   if (since !== undefined) qs.set('since', String(since))
-  const body = await apiFetch<AlertPayload[] | { alerts: AlertPayload[] } | undefined>(
-    `/alerts?${qs.toString()}`,
-    { signal }
-  )
+  const body = await apiFetch<unknown>(`/alerts?${qs.toString()}`, { signal })
   if (!body) return []
-  return Array.isArray(body) ? body : body.alerts ?? []
+  const list = Array.isArray(body)
+    ? body
+    : ((body as { alerts?: unknown }).alerts ?? [])
+  if (!Array.isArray(list))
+    throw new Error('Invalid alerts response: expected an array of alerts')
+  return list.map((entry, index) => {
+    const result = validateAlertPayload(entry)
+    if (typeof result === 'string') {
+      throw new Error(`Invalid alerts response: entry ${index}: ${result}`)
+    }
+    return result
+  })
+}
+
+/**
+ * Returns the alert or an error message. The whole response is rejected on
+ * any invalid entry so a core schema change never writes unusable records
+ * into the local cache.
+ */
+export function validateAlertPayload(entry: unknown): AlertPayload | string {
+  if (typeof entry !== 'object' || entry === null)
+    return 'alert must be an object'
+  const a = entry as Record<string, unknown>
+  for (const key of [
+    'label',
+    'contract_id',
+    'network',
+    'transaction_hash',
+    'horizon_link',
+  ]) {
+    if (typeof a[key] !== 'string') return `${key} must be a string`
+  }
+  if (!isAlertRuleType(a.rule_triggered))
+    return `unknown rule_triggered "${String(a.rule_triggered)}"`
+  if (typeof a.timestamp !== 'number' || !Number.isFinite(a.timestamp)) {
+    return 'timestamp must be epoch milliseconds'
+  }
+  if (a.function_name !== undefined && typeof a.function_name !== 'string') {
+    return 'function_name must be a string'
+  }
+  if (a.amount !== undefined && typeof a.amount !== 'number')
+    return 'amount must be a number'
+  if (a.is_test !== undefined && typeof a.is_test !== 'boolean')
+    return 'is_test must be a boolean'
+  return entry as AlertPayload
+  const body = await apiFetch<
+    AlertPayload[] | { alerts: AlertPayload[] } | undefined
+  >(`/alerts?${qs.toString()}`, { signal })
+  if (!body) return []
+  return Array.isArray(body) ? body : (body.alerts ?? [])
 }
 
 /**
@@ -40,7 +92,7 @@ export async function fetchAlerts(
  * stored alert is uniquely identifiable even though the core payload
  * carries no `id`.
  */
-export function alertKey(
+function alertKey(
   a: Pick<AlertPayload, 'transaction_hash' | 'rule_triggered' | 'timestamp'>
 ): string {
   return `${a.transaction_hash}::${a.rule_triggered}::${a.timestamp}`
@@ -63,23 +115,6 @@ export function filterNewAlerts(
 }
 
 /**
- * Parse the cached `txwatch_alerts` array once and return the latest alert
- * timestamp per contract id. Avoids re-parsing the whole array for every card
- * on every render (e.g. while typing in the search box).
- */
-export function getLatestAlertTimestamps(): Record<string, number> {
-  const latest: Record<string, number> = {}
-  for (const alert of getAlerts()) {
-    const id = alert.contract_id
-    if (!id) continue
-    const ts = alert.timestamp
-    if (typeof ts !== 'number') continue
-    if (latest[id] === undefined || ts > latest[id]) latest[id] = ts
-  }
-  return latest
-}
-
-/**
  * Fetch alerts from core and merge new ones into the local cache.
  * Returns the newly added alerts (oldest first).
  */
@@ -90,9 +125,12 @@ export async function syncAlerts(
 ): Promise<AlertPayload[]> {
   const local = getAlerts(contractId)
   const since =
-    opts.since ?? (local.length ? Math.max(...local.map((a) => a.timestamp)) : undefined)
+    opts.since ??
+    (local.length ? Math.max(...local.map((a) => a.timestamp)) : undefined)
   const fetched = await fetchAlerts(contractId, network, { ...opts, since })
-  const fresh = filterNewAlerts(local, fetched).sort((a, b) => a.timestamp - b.timestamp)
+  const fresh = filterNewAlerts(local, fetched).sort(
+    (a, b) => a.timestamp - b.timestamp
+  )
   fresh.forEach((a) => addAlert(a))
   return fresh
 }
@@ -103,8 +141,30 @@ export interface AlertPollHandlers {
 }
 
 /**
+ * Delay before the next poll: the base interval after a success, doubled per
+ * consecutive failure (capped), and never sooner than a 429/503 Retry-After.
+ */
+export function nextPollDelay(
+  intervalMs: number,
+  failures: number,
+  error?: unknown
+): number {
+  if (failures === 0) return intervalMs
+  const backoff = Math.min(
+    intervalMs * 2 ** failures,
+    ALERT_POLL_MAX_INTERVAL_MS
+  )
+  const { status, retryAfterMs } = (error ?? {}) as Partial<ApiError>
+  if ((status === 429 || status === 503) && retryAfterMs !== undefined) {
+    return Math.max(backoff, retryAfterMs)
+  }
+  return backoff
+}
+
+/**
  * Poll syncAlerts on an interval, only while the page is visible.
- * Runs once immediately. Returns a stop function.
+ * Runs once immediately and backs off after consecutive failures.
+ * Returns a stop function.
  */
 export function startAlertPolling(
   contractId: string,
@@ -113,35 +173,51 @@ export function startAlertPolling(
   intervalMs = ALERT_POLL_INTERVAL_MS
 ): () => void {
   let stopped = false
-  let timer: ReturnType<typeof setInterval> | undefined
+  let running = false
+  let timer: ReturnType<typeof setTimeout> | undefined
   let inFlight = false
+  let failures = 0
+  let delay = intervalMs
 
+  const schedule = () => {
+    if (stopped || !running || timer || inFlight) return
+    timer = setTimeout(tick, delay)
+  }
   const tick = async () => {
+    timer = undefined
     if (stopped || inFlight) return
     inFlight = true
     try {
       const fresh = await syncAlerts(contractId, network)
+      failures = 0
+      delay = nextPollDelay(intervalMs, failures)
       if (!stopped) onSync?.(fresh, Date.now())
     } catch (e) {
+      failures += 1
+      delay = nextPollDelay(intervalMs, failures, e)
       if (!stopped) onError?.(e)
     } finally {
       inFlight = false
+      schedule()
     }
   }
-  const visible = () => typeof document === 'undefined' || document.visibilityState !== 'hidden'
+  const visible = () =>
+    typeof document === 'undefined' || document.visibilityState !== 'hidden'
   const start = () => {
-    if (timer) return
-    void tick()
-    timer = setInterval(tick, intervalMs)
+    if (running) return
+    running = true
+    if (!inFlight) void tick()
   }
   const pause = () => {
-    if (timer) clearInterval(timer)
+    running = false
+    if (timer) clearTimeout(timer)
     timer = undefined
   }
   const onVisibility = () => (visible() ? start() : pause())
 
   if (visible()) start()
-  if (typeof document !== 'undefined') document.addEventListener('visibilitychange', onVisibility)
+  if (typeof document !== 'undefined')
+    document.addEventListener('visibilitychange', onVisibility)
   return () => {
     stopped = true
     pause()
