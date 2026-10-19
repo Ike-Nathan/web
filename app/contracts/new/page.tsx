@@ -11,7 +11,12 @@ import {
 } from '@/lib/stellar'
 import { syncSaveContract } from '@/lib/contractSync'
 import { getContracts } from '@/lib/storage'
-import { buildTestWebhookPayload, describeRule, sendTestWebhook } from '@/lib/api'
+import {
+  buildTestWebhookPayload,
+  describeRule,
+  TEST_CONTRACT_ID,
+} from '@/lib/api'
+import WebhookTestButton from '@/components/WebhookTestButton'
 import { generateWebhookSecret } from '@/lib/webhookSignature'
 import { generateId } from '@/lib/id'
 import CopyButton from '@/components/CopyButton'
@@ -59,10 +64,7 @@ export default function NewContractPage() {
   
   // Test payload state
   const [testRuleIndex, setTestRuleIndex] = useState(0)
-  const [testStatus, setTestStatus] = useState<'idle' | 'sending' | 'ok' | 'error'>('idle')
-  const [testError, setTestError] = useState<string | null>(null)
   const [showPayloadPreview, setShowPayloadPreview] = useState(false)
-  const testAbortRef = useRef<AbortController | null>(null)
 
   // Draft Restoration State
   const [draftExists, setDraftExists] = useState(false)
@@ -177,17 +179,20 @@ export default function NewContractPage() {
   const testRule: AlertRule | undefined =
     rules[testRuleIndex] ?? (rules.length > 0 ? rules[0] : undefined)
 
+  // Until a valid contract ID is entered, tests use a placeholder contract.
+  const testContractId = isValidContractId(contractId.trim())
+    ? contractId.trim()
+    : TEST_CONTRACT_ID
+
   const testPayload = useMemo<AlertPayload>(
     () =>
       buildTestWebhookPayload({
-        contractId: contractId.trim() || 'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+        contractId: testContractId,
         network,
         rule: testRule,
       }),
-    [contractId, network, testRule]
+    [testContractId, network, testRule]
   )
-
-  useEffect(() => () => testAbortRef.current?.abort(), [])
 
   const labelInputRef = useRef<HTMLInputElement>(null)
   const contractIdInputRef = useRef<HTMLInputElement>(null)
@@ -243,7 +248,7 @@ export default function NewContractPage() {
   function handleWalletConnect() {
     setErrors((prev) => ({ ...prev, wallet: undefined }))
     // The wallet's network is only knowable once it is connected.
-    void checkNetworkMismatch(network)
+    void checkNetworkMismatch()
   }
 
   function handleWalletDisconnect() {
@@ -309,7 +314,6 @@ export default function NewContractPage() {
     if (norm.network && norm.network !== network) {
       targetNetwork = norm.network
       setNetwork(targetNetwork)
-      checkNetworkMismatch(targetNetwork)
     }
   }
 
@@ -325,7 +329,6 @@ export default function NewContractPage() {
       if (norm.network && norm.network !== network) {
         targetNetwork = norm.network
         setNetwork(targetNetwork)
-        checkNetworkMismatch(targetNetwork)
       }
     }
   }
@@ -394,44 +397,6 @@ export default function NewContractPage() {
     if (!result.ok) showToast(result.error || 'API Sync Error', 'error')
   }
 
-  async function handleTestWebhook() {
-    const url = webhookUrl.trim()
-    if (!url) {
-      setErrors((prev) => ({ ...prev, webhook_url: 'Webhook URL is required to test' }))
-      return
-    }
-    const urlResult = validateWebhookUrl(url, network)
-    if (!urlResult.valid) {
-      setTestStatus('error')
-      setTestError(urlResult.message ?? 'Enter a valid webhook URL')
-      return
-    }
-
-    testAbortRef.current?.abort()
-    const controller = new AbortController()
-    testAbortRef.current = controller
-
-    setTestStatus('sending')
-    setTestError(null)
-
-    try {
-      const res = await sendTestWebhook(url, {
-        payload: testPayload,
-        signalOrTimeoutMs: controller.signal,
-        secret: webhookSecret || undefined,
-      })
-      if (res.ok) {
-        setTestStatus('ok')
-      } else {
-        setTestStatus('error')
-        setTestError(`Delivery failed with HTTP status ${res.status}`)
-      }
-    } catch (err) {
-      if ((err as { name?: string })?.name === 'AbortError') return
-      setTestStatus('error')
-      setTestError(err instanceof Error ? err.message : 'Failed to send test webhook')
-    }
-  }
 
   return (
     <>
@@ -583,7 +548,6 @@ export default function NewContractPage() {
                 const n = e.target.value as Network
                 setNetwork(n)
                 setErrors((prev) => ({ ...prev, network: undefined }))
-                void checkNetworkMismatch(n)
               }}
               aria-invalid={Boolean(errors.network)}
               aria-describedby={errors.network ? networkErrorId : undefined}
@@ -728,7 +692,7 @@ export default function NewContractPage() {
                   className="w-full bg-zinc-950 border border-zinc-700 rounded px-2.5 py-1.5 text-xs text-zinc-200"
                 >
                   {rules.map((r, idx) => (
-                    <option key={r.id || idx} value={idx}>
+                    <option key={idx} value={idx}>
                       Rule #{idx + 1}: {describeRule(r)}
                     </option>
                   ))}
@@ -767,18 +731,15 @@ export default function NewContractPage() {
             >
               Cancel
             </button>
-            <button
-              type="button"
-              onClick={handleTestWebhook}
-              disabled={testStatus === 'sending'}
-              className="bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 text-zinc-200 text-sm font-medium rounded-lg px-4 py-2.5 transition-colors"
-            >
-              {testStatus === 'sending' ? 'Testing…' : 'Test Webhook'}
-            </button>
           </div>
 
-          {testStatus === 'ok' && <p className="text-xs text-emerald-400">Webhook delivered successfully.</p>}
-          {testStatus === 'error' && <p className="text-xs text-red-400">{testError}</p>}
+          <WebhookTestButton
+            url={webhookUrl}
+            contractId={testContractId}
+            network={network}
+            rule={testRule}
+            secret={webhookSecret}
+          />
         </form>
       </div>
     </>

@@ -131,6 +131,10 @@ export interface TestWebhookResult {
  */
 export const TEST_TX_HASH = 'ab'.repeat(32)
 
+/** Valid placeholder contract (all-zero hash) for tests sent before a contract ID is entered. */
+export const TEST_CONTRACT_ID =
+  'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4'
+
 /** Human-readable label for a rule, used in the test-payload rule picker. */
 export function describeRule(rule: AlertRule): string {
   switch (rule.type) {

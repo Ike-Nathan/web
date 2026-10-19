@@ -1,9 +1,6 @@
 import { apiFetch, isApiConfigured } from '@/lib/api'
-import { apiFetch } from '@/lib/api'
 import { validateContractEntry } from '@/lib/importSchema'
 import {
-  FUNCTION_NAME_REGEX,
-  SOROBAN_SYMBOL_MAX_LENGTH,
   isValidFunctionName,
   sanitizeAdminFunctionNames,
 } from '@/lib/soroban'
@@ -21,8 +18,6 @@ import type { WatchedContract } from '@/types'
 // Function-name validation lives in lib/soroban.ts; re-exported here so
 // existing imports from '@/lib/contractsApi' keep working.
 export {
-  FUNCTION_NAME_REGEX,
-  SOROBAN_SYMBOL_MAX_LENGTH,
   isValidFunctionName,
   sanitizeAdminFunctionNames,
 }
@@ -142,7 +137,6 @@ function serializeContract(contract: WatchedContract): string {
   return JSON.stringify(payload)
 }
 
-export function createContract(contract: WatchedContract): Promise<WatchedContract> {
 export function createContract(
   contract: WatchedContract
 ): Promise<WatchedContract> {
@@ -152,11 +146,6 @@ export function createContract(
   })
 }
 
-export function updateContract(contract: WatchedContract): Promise<WatchedContract> {
-  return apiFetch<WatchedContract>(`/contracts/${encodeURIComponent(contract.id)}`, {
-    method: 'PUT',
-    body: serializeContract(contract),
-  })
 export function updateContract(
   contract: WatchedContract
 ): Promise<WatchedContract> {
@@ -164,7 +153,7 @@ export function updateContract(
     `/contracts/${encodeURIComponent(contract.id)}`,
     {
       method: 'PUT',
-      body: JSON.stringify(contract),
+      body: serializeContract(contract),
     }
   )
 }
