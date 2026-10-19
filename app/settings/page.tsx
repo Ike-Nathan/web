@@ -2,6 +2,7 @@
 
 import ContractImportExport from '@/components/ContractImportExport'
 import RetentionSetting from '@/components/RetentionSetting'
+import ApiKeySetting from '@/components/ApiKeySetting'
 import { exportAllStorageData, clearTxWatchStorage } from '@/lib/storageKeys'
 
 export default function SettingsPage() {
@@ -23,6 +24,7 @@ export default function SettingsPage() {
       <h1 className="text-2xl font-bold">Settings</h1>
       <ContractImportExport />
       <RetentionSetting />
+      <ApiKeySetting />
       <section className="space-y-4">
         <h2 className="text-lg font-semibold">Data Management</h2>
         <div className="flex flex-wrap gap-3">

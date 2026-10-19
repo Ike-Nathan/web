@@ -67,9 +67,9 @@ const NETWORKS: Network[] = ['mainnet', 'testnet', 'futurenet']
  * Returns the cleaned list or an error message naming the rejected values.
  */
 function normalizeFunctionNames(names: string[]): string[] | string {
-  const { valid, rejected } = sanitizeAdminFunctionNames(names)
-  if (rejected.length > 0) {
-    return `invalid function name(s): ${rejected.map((n) => `"${n}"`).join(', ')}`
+  const { valid, invalid } = sanitizeAdminFunctionNames(names)
+  if (invalid.length > 0) {
+    return `invalid function name(s): ${invalid.map((n) => `"${n}"`).join(', ')}`
   }
   return valid
 }
@@ -96,6 +96,7 @@ const NOTIFICATION_PREFERENCES: NotificationPreference[] = [
 ]
 
 /** Normalizes unknown settings input, falling back to defaults per field. */
+export function normalizeSettings(input: unknown): BackupSettings {
 function normalizeSettings(input: unknown): BackupSettings {
   if (typeof input !== 'object' || input === null)
     return { ...DEFAULT_BACKUP_SETTINGS }
