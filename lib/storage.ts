@@ -340,17 +340,13 @@ export function deleteAlertsByNetwork(contractId: string, network: string) {
 }
 
 // Persists a full alert list (used by the import flow to restore a backup).
-// Rewrites `contract_id` on every alert matching `oldContractId` so alert history
-// survives when an imported contract is re-keyed under a new id.
-export function rekeyAlerts(
-  oldContractId: string,
-  newContractId: string
-): boolean {
 export function replaceAlerts(alerts: AlertPayload[]): boolean {
   const valid = alerts.filter((a) => isValidAlert(a))
   return save(ALERTS_KEY, valid)
 }
 
+// Rewrites `contract_id` on every alert matching `oldContractId` so alert history
+// survives when an imported contract is re-keyed under a new id.
 export function rekeyAlerts(oldContractId: string, newContractId: string): boolean {
   if (oldContractId === newContractId) return true
   const alerts = load<AlertPayload>(ALERTS_KEY)
@@ -478,4 +474,44 @@ function capAlertsPerContract(alerts: AlertPayload[]): AlertPayload[] {
   }
 
   return alerts.filter((alert) => kept.has(alert))
+}
+
+// Subscribes to changes for a given storage key. Fires for same-tab writes
+// (via the `txwatch:storage` CustomEvent dispatched by notifyChange) and for
+// cross-tab writes (via the native `storage` event). Returns an unsubscribe fn.
+function subscribeToKey(key: string, cb: () => void): () => void {
+  if (typeof window === 'undefined') return () => {}
+
+  const handleCustom = (event: Event) => {
+    const detail = (event as CustomEvent<{ key?: string }>).detail
+    if (!detail || detail.key === key) cb()
+  }
+
+  const handleStorage = (event: StorageEvent) => {
+    if (event.key === key || event.key === null) cb()
+  }
+
+  window.addEventListener(STORAGE_EVENT, handleCustom as EventListener)
+  window.addEventListener('storage', handleStorage)
+
+  return () => {
+    window.removeEventListener(STORAGE_EVENT, handleCustom as EventListener)
+    window.removeEventListener('storage', handleStorage)
+  }
+}
+
+export function onAlertsChange(cb: () => void): () => void {
+  return subscribeToKey(ALERTS_KEY, cb)
+}
+
+export function onContractsChange(cb: () => void): () => void {
+  return subscribeToKey(CONTRACTS_KEY, cb)
+}
+
+// Counts alerts recorded since local midnight across all contracts.
+export function getTodayAlertCount(): number {
+  const midnight = new Date()
+  midnight.setHours(0, 0, 0, 0)
+  const startOfDay = midnight.getTime()
+  return load<AlertPayload>(ALERTS_KEY).filter((a) => a.timestamp >= startOfDay).length
 }

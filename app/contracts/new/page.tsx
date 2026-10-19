@@ -12,34 +12,10 @@ import {
 import { syncSaveContract } from '@/lib/contractSync'
 import { getContracts } from '@/lib/storage'
 import { buildTestWebhookPayload, describeRule, sendTestWebhook } from '@/lib/api'
-import { getWalletNetwork, isNetworkMatch } from '@/lib/freighter'
 import { generateWebhookSecret } from '@/lib/webhookSignature'
-import { useState, useRef, useEffect, useMemo } from 'react'
-import { useRouter } from 'next/navigation'
-import { AlertPayload, AlertRule, Network, WatchedContract } from '@/types'
-import { isValidContractId, isValidUrl, normalizeContractId } from '@/lib/stellar'
-import { syncSaveContract } from '@/lib/contractSync'
-import { addContract, getContracts, saveContract } from '@/lib/storage'
-import { useState, useRef, useEffect } from 'react'
-import { useRouter } from 'next/navigation'
-import { AlertRule, Network, WatchedContract } from '@/types'
-import { isValidContractId, isValidUrl, normalizeContractId, contractExists } from '@/lib/stellar'
-import { syncSaveContract } from '@/lib/contractSync'
-import { addContract, saveContract, getContracts } from '@/lib/storage'
-import { generateWebhookSecret } from '@/lib/webhookSignature'
-import { buildTestWebhookPayload, sendTestWebhook } from '@/lib/api'
-import { generateId } from '@/lib/id'
-import { useState, useRef, useEffect, useMemo, useCallback } from 'react'
-import { useRouter } from 'next/navigation'
-import { AlertPayload, AlertRule, Network, WatchedContract } from '@/types'
-import { isValidContractId, isValidUrl, normalizeContractId, contractExists } from '@/lib/stellar'
-import { syncSaveContract } from '@/lib/contractSync'
-import { getContracts } from '@/lib/storage'
-import { buildTestWebhookPayload, describeRule, sendTestWebhook } from '@/lib/api'
 import { generateId } from '@/lib/id'
 import { parseAlertRule } from '@/lib/alertRules'
 import CopyButton from '@/components/CopyButton'
-import { isNetworkMatch } from '@/lib/freighter'
 import ContractVerification from '@/components/ContractVerification'
 import { useFreighterConnection } from '@/lib/useFreighterConnection'
 import { useNetworkMismatchWarning } from '@/lib/useNetworkMismatchWarning'
@@ -467,22 +443,11 @@ export default function NewContractPage() {
       return
     }
     const urlResult = validateWebhookUrl(url, network)
-    if (!urlResult.ok && urlResult.code !== 'http_warning') {
+    if (!urlResult.valid) {
       setTestStatus('error')
-      setTestError(webhookUrlErrorMessage(urlResult.code))
-    if (!isValidUrl(url)) {
-      setErrors((prev) => ({ ...prev, webhook_url: 'Must be a valid http/https URL' }))
+      setTestError(webhookUrlErrorMessage(urlResult.code ?? 'invalid_url'))
       return
     }
-    const payload = buildTestWebhookPayload({
-      contractId: contractId.trim(),
-      network,
-      rule: rules[0],
-    })
-    return sendTestWebhook(url, {
-      payload,
-      secret: webhookSecret || undefined,
-    })
 
     testAbortRef.current?.abort()
     const controller = new AbortController()
@@ -501,18 +466,12 @@ export default function NewContractPage() {
         setTestStatus('ok')
       } else {
         setTestStatus('error')
-        setTestError(`Receiver responded with HTTP ${res.status}.`)
+        setTestError(`Delivery failed with HTTP status ${res.status}`)
       }
     } catch (err) {
       if ((err as { name?: string })?.name === 'AbortError') return
       setTestStatus('error')
-      setTestError(err instanceof Error ? err.message : 'Failed to send test webhook.')
-        setTestError(`Delivery failed with HTTP status ${res.status}`)
-      }
-    } catch (err: any) {
-      if (err?.name === 'AbortError') return
-      setTestStatus('error')
-      setTestError(err?.message || 'Failed to send test webhook')
+      setTestError(err instanceof Error ? err.message : 'Failed to send test webhook')
     }
   }
 
@@ -845,11 +804,11 @@ export default function NewContractPage() {
             {showPayloadPreview && (
               <pre className="mt-2 p-2 rounded bg-zinc-950 border border-zinc-800 text-[11px] text-zinc-300 overflow-x-auto">
                 {JSON.stringify(
-                  buildTestWebhookPayload(
-                    contractId.trim() || 'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+                  buildTestWebhookPayload({
+                    contractId: contractId.trim(),
                     network,
-                    { rule: rules[selectedRuleIndex] }
-                  ),
+                    rule: rules[selectedRuleIndex],
+                  }),
                   null,
                   2
                 )}

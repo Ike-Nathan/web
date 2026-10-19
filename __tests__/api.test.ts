@@ -175,7 +175,8 @@ describe('sendTestWebhook', () => {
       label: 'Test Alert',
       contract_id: 'CBCDEF',
       network: 'testnet',
-      rule_triggered: 'AnyTransaction',
+      rule_triggered: 'FunctionCalled',
+      function_name: 'transfer',
       is_test: true,
     })
     expect(sentPayload().transaction_hash).toMatch(/^[0-9a-f]{64}$/)
@@ -231,12 +232,10 @@ describe('sendTestWebhook', () => {
     )
 
     const callerController = new AbortController()
-    const promise = sendTestWebhook(
-      'https://example.com/webhook',
-      'CBCDEF',
-      'testnet',
-      callerController.signal
-    )
+    const promise = sendTestWebhook('https://example.com/webhook', {
+      contractId: 'CBCDEF',
+      signal: callerController.signal,
+    })
 
     vi.advanceTimersByTime(10001)
 
@@ -259,12 +258,10 @@ describe('sendTestWebhook', () => {
     )
 
     const callerController = new AbortController()
-    const promise = sendTestWebhook(
-      'https://example.com/webhook',
-      'CBCDEF',
-      'testnet',
-      callerController.signal
-    )
+    const promise = sendTestWebhook('https://example.com/webhook', {
+      contractId: 'CBCDEF',
+      signal: callerController.signal,
+    })
 
     callerController.abort()
 
