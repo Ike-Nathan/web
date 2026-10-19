@@ -18,6 +18,10 @@ vi.mock('@/lib/contractSync', () => ({
   syncSaveContract: vi.fn().mockResolvedValue(true),
 }))
 
+vi.mock('@/components/ToastProvider', () => ({
+  useToast: () => ({ showToast: vi.fn() }),
+}))
+
 vi.mock('@/lib/storage', () => ({
   getContracts: vi.fn().mockReturnValue([]),
   addContract: vi.fn(),
@@ -29,7 +33,6 @@ vi.mock('@/lib/stellar', async (importOriginal) => {
   return {
     ...actual,
     checkContractOnNetwork: vi.fn().mockResolvedValue(true),
-    contractExists: vi.fn().mockResolvedValue(true),
   }
 })
 

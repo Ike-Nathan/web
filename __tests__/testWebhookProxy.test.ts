@@ -19,7 +19,11 @@ vi.mock('node:dns', () => ({
 
 vi.mock('@/lib/webhookProxy', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/webhookProxy')>()),
-  deliverWebhook: vi.fn(async () => ({ status: 200, location: null })),
+  deliverWebhook: vi.fn(async () => ({
+    status: 200,
+    location: null,
+    bodySnippet: null,
+  })),
 }))
 
 import type { NextRequest } from 'next/server'
@@ -79,6 +83,22 @@ describe('POST /api/test-webhook', () => {
     const res = await POST(request(valid, headers))
     expect(res.status).toBe(403)
     expect(deliverWebhook).not.toHaveBeenCalled()
+  })
+
+  it('returns the receiver duration and body snippet', async () => {
+    vi.mocked(deliverWebhook).mockResolvedValueOnce({
+      status: 500,
+      location: null,
+      bodySnippet: 'Internal Server Error',
+    })
+    const res = await POST(request(valid))
+    const body = await res.json()
+    expect(body).toMatchObject({
+      status: 500,
+      ok: false,
+      bodySnippet: 'Internal Server Error',
+    })
+    expect(typeof body.durationMs).toBe('number')
   })
 
   it('accepts a matching Origin when Sec-Fetch-Site is absent', async () => {

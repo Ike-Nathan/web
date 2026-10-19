@@ -1,13 +1,22 @@
+import { Address, xdr } from '@stellar/stellar-sdk'
 import { isValidContractId, sorobanRpcUrl } from '@/lib/stellar'
 import type { Network } from '@/types'
 
 /**
- * Ledger key of a contract instance: the contract ID plus the zeroed 32-byte
- * instance key, base64-encoded. A contract that exists on the target network
- * has an entry under this key.
+ * Base64 `LedgerKey` XDR of a contract's instance entry: persistent contract
+ * data keyed by `ScVal::LedgerKeyContractInstance`. Soroban RPC's
+ * `getLedgerEntries` only accepts keys in this form. A contract that exists
+ * on the target network has an entry under this key.
  */
-export const CONTRACT_INSTANCE_KEY =
-  'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='
+export function contractInstanceLedgerKey(contractId: string): string {
+  return xdr.LedgerKey.contractData(
+    new xdr.LedgerKeyContractData({
+      contract: Address.fromString(contractId).toScAddress(),
+      key: xdr.ScVal.scvLedgerKeyContractInstance(),
+      durability: xdr.ContractDataDurability.persistent(),
+    })
+  ).toXDR('base64')
+}
 
 /** Default Soroban RPC timeout, in milliseconds. */
 const CONTRACT_LOOKUP_TIMEOUT_MS = 8000
@@ -33,7 +42,7 @@ export function getLedgerEntriesRequest(contractId: string, id = 1): string {
     id,
     method: 'getLedgerEntries',
     params: {
-      keys: [{ contractInstance: { contractId, key: CONTRACT_INSTANCE_KEY } }],
+      keys: [contractInstanceLedgerKey(contractId)],
     },
   })
 }

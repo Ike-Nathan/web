@@ -4,9 +4,6 @@ import { axe } from 'vitest-axe'
 import NewContractPage from '@/app/contracts/new/page'
 import { syncSaveContract } from '@/lib/contractSync'
 import { addContract, saveContract } from '@/lib/storage'
-import { render, screen, fireEvent } from '@testing-library/react'
-import NewContractPage from '@/app/contracts/new/page'
-import { addContract } from '@/lib/storage'
 
 const pushMock = vi.fn()
 const backMock = vi.fn()
@@ -20,6 +17,10 @@ vi.mock('next/navigation', () => ({
 
 vi.mock('@/lib/contractSync', () => ({
   syncSaveContract: vi.fn().mockResolvedValue({ ok: true, localSaved: true }),
+}))
+
+vi.mock('@/components/ToastProvider', () => ({
+  useToast: () => ({ showToast: vi.fn() }),
 }))
 
 vi.mock('@/lib/storage', () => ({
@@ -79,8 +80,6 @@ describe('NewContractPage - Timer Cleanup & Form Guard (#18, #19, #20)', () => {
     vi.useRealTimers()
   })
 
-  it('saves a valid contract once and redirects without DuplicateContractError (#194)', async () => {
-    vi.useFakeTimers()
   it('submits via the form when Enter is pressed in a field (#199)', async () => {
     render(<NewContractPage />)
 

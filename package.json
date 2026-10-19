@@ -14,6 +14,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest --run",
     "test:watch": "vitest",
+    "test:smoke": "vitest --run __tests__/smoke",
     "test:coverage": "vitest --run --coverage",
     "e2e": "playwright test",
     "e2e:debug": "playwright test --debug",

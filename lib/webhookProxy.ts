@@ -3,6 +3,7 @@ import http from 'node:http'
 import https from 'node:https'
 import type { LookupFunction } from 'node:net'
 import { classifyHost, classifyIp, isIpLiteral } from '@/lib/ipRanges'
+import { MAX_BODY_SNIPPET_BYTES, sanitizeBodySnippet } from '@/lib/bodySnippet'
 
 /**
  * Server-only helpers for the test-webhook proxy (#259, #261).
@@ -71,6 +72,8 @@ export interface DeliveryResult {
   status: number
   /** Location header of a 3xx response; redirects are never followed. */
   location: string | null
+  /** Sanitised first bytes of a text response body (max 1 KB), else null. */
+  bodySnippet: string | null
 }
 
 /**
@@ -101,11 +104,35 @@ export function deliverWebhook(
         lookup: vettedLookup,
       },
       (res) => {
-        res.resume()
-        resolve({
-          status: res.statusCode ?? 0,
-          location: res.headers.location ?? null,
+        // Read just enough of the body for a snippet (one byte past the limit
+        // marks it as truncated), then stop downloading.
+        const chunks: Buffer[] = []
+        let received = 0
+        let settled = false
+        const finish = () => {
+          if (settled) return
+          settled = true
+          resolve({
+            status: res.statusCode ?? 0,
+            location: res.headers.location ?? null,
+            bodySnippet: sanitizeBodySnippet(
+              Buffer.concat(chunks),
+              res.headers['content-type']
+            ),
+          })
+        }
+        res.on('data', (chunk: Buffer) => {
+          if (settled) return
+          chunks.push(chunk)
+          received += chunk.length
+          if (received > MAX_BODY_SNIPPET_BYTES) {
+            finish()
+            res.destroy()
+          }
         })
+        res.on('end', finish)
+        res.on('close', finish)
+        res.on('error', finish)
       }
     )
     req.setTimeout(timeoutMs, () => {

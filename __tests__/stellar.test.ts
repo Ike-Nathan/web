@@ -2,7 +2,6 @@ import { vi } from 'vitest'
 import {
   isValidContractId,
   normalizeContractId,
-  contractExists,
   mapFreighterNetwork,
   validateWebhookUrl,
 } from '@/lib/stellar'
@@ -244,59 +243,5 @@ describe('validateWebhookUrl', () => {
     for (const code of ['invalid', 'credentials', 'loopback', 'private'] as const) {
       expect(isWebhookUrlWarning(code)).toBe(false)
     }
-  })
-})
-
-describe('contractExists', () => {
-  const originalFetch = global.fetch
-  const testContractId = 'CDSO4GGZH7KBUQYKOIQDCMCFSRYEPOVDUX7Z4IB5TWNTLT2GDRKDQOYR'
-
-  afterEach(() => {
-    global.fetch = originalFetch
-  })
-
-  it('returns true when ledger entry exists', async () => {
-    global.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        result: {
-          entries: [{ key: 'AAAA...', xdr: 'BBBB...' }],
-        },
-      }),
-    } as any)
-
-    const exists = await contractExists('testnet', testContractId)
-    expect(exists).toBe(true)
-  })
-
-  it('returns false when ledger entry does not exist (empty entries array)', async () => {
-    global.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        result: {
-          entries: [],
-        },
-      }),
-    } as any)
-
-    const exists = await contractExists('testnet', testContractId)
-    expect(exists).toBe(false)
-  })
-
-  it('returns true on RPC error response (graceful fallback)', async () => {
-    global.fetch = vi.fn().mockResolvedValue({
-      ok: false,
-      status: 500,
-    } as any)
-
-    const exists = await contractExists('testnet', testContractId)
-    expect(exists).toBe(true)
-  })
-
-  it('returns true on network timeout or fetch exception (graceful fallback)', async () => {
-    global.fetch = vi.fn().mockRejectedValue(new Error('Network timeout'))
-
-    const exists = await contractExists('testnet', testContractId)
-    expect(exists).toBe(true)
   })
 })
