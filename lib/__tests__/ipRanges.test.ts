@@ -59,6 +59,47 @@ describe('validateWebhookUrl uses the shared classifier', () => {
     ['https://198.18.0.1/hook', 'private_ip_not_allowed'],
     ['https://fdroid.org/hook', null],
   ])('%s -> %s', (url, expected) => {
-    expect(validateWebhookUrl(url, 'mainnet')).toBe(expected)
+    expect(validateWebhookUrl(url, 'mainnet').code).toBe(expected)
+  })
+
+  // Regression: IPv6 range checks must only apply to bracketed IP literals,
+  // never to hostnames that merely start with fc/fd/fe80.
+  it.each([
+    'https://fcbarcelona.com/hook',
+    'https://fd-alerts.example.com/hook',
+    'https://fe80labs.io/hook',
+    'https://fc00.example.com/hook',
+  ])('accepts the public hostname %s', (url) => {
+    expect(validateWebhookUrl(url, 'mainnet')).toMatchObject({
+      valid: true,
+      code: null,
+    })
+  })
+
+  // The most severe problem wins: a blocked address beats a plain-http
+  // warning or the mainnet http error.
+  it.each([
+    ['http://localhost/hook', 'testnet', 'loopback_not_allowed'],
+    ['http://localhost/hook', 'mainnet', 'loopback_not_allowed'],
+    ['http://127.0.0.1/hook', 'testnet', 'loopback_not_allowed'],
+    ['http://[::1]/hook', 'testnet', 'loopback_not_allowed'],
+    ['http://[fd00::1]/hook', 'testnet', 'private_ip_not_allowed'],
+    ['http://10.0.0.5/hook', 'mainnet', 'private_ip_not_allowed'],
+    ['http://[fe80::1]/hook', 'testnet', 'link_local_not_allowed'],
+    ['http://user:pass@localhost/hook', 'testnet', 'credentials_in_url'],
+  ] as const)('%s on %s -> %s', (url, network, expected) => {
+    const result = validateWebhookUrl(url, network)
+    expect(result.code).toBe(expected)
+    expect(result.valid).toBe(false)
+  })
+
+  it('still warns (not blocks) on plain http to a public host on testnet', () => {
+    expect(
+      validateWebhookUrl('http://example.com/hook', 'testnet')
+    ).toMatchObject({
+      valid: true,
+      code: 'http_warning',
+      warning: true,
+    })
   })
 })

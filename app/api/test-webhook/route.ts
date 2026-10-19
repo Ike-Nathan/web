@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { signWebhookPayload, SIGNATURE_HEADER } from '@/lib/webhookSignature'
-import { buildTestWebhookPayload } from '@/lib/api'
-import { isValidContractId } from '@/lib/stellar'
+import { SIGNATURE_HEADER } from '@/lib/webhookSignature'
+import { parseCanonicalTestPayload } from '@/lib/api'
 import { classifyHost, isIpLiteral } from '@/lib/ipRanges'
 import {
   BlockedAddressError,
@@ -9,12 +8,11 @@ import {
   deliverWebhook,
   resolvePublicAddresses,
 } from '@/lib/webhookProxy'
-import { parseAlertRule, type AlertRule, type Network } from '@/types'
 
-const NETWORKS: Network[] = ['mainnet', 'testnet', 'futurenet']
-/** Request bodies are small ({ url, contractId, network, rule, secret }). */
+/** Request bodies are small ({ url, body, signature }). */
 const MAX_BODY_BYTES = 4096
-const MAX_SECRET_LENGTH = 256
+/** Signature computed in the browser over `body` (lib/webhookSignature). */
+const SIGNATURE_FORMAT = /^sha256=[0-9a-f]{64}$/
 const RATE_LIMIT = 10
 const RATE_WINDOW_MS = 60_000
 const TIMEOUT_MS = 10000
@@ -75,24 +73,23 @@ export async function POST(req: NextRequest) {
     return fail(400, 'Malformed request body')
   }
 
-  const { url, contractId, network, rule, secret } = data
+  // NOTE: never log the request body or headers here; the body carries a
+  // webhook payload and, from older clients, possibly a signing secret.
+  const { url, body, signature } = data
+  // The signing secret must stay in the browser; sign there and send only
+  // the signature. Reject rather than silently accept a leaked secret.
+  if ('secret' in data)
+    return fail(400, 'Do not send the signing secret; send a signature')
   if (!url || typeof url !== 'string')
     return fail(400, 'A valid url is required')
-  if (typeof contractId !== 'string' || !isValidContractId(contractId)) {
-    return fail(400, 'A valid contractId is required')
-  }
-  if (!NETWORKS.includes(network as Network))
-    return fail(400, 'A valid network is required')
-  let parsedRule: AlertRule | undefined
-  if (rule !== undefined && rule !== null) {
-    parsedRule = parseAlertRule(rule) ?? undefined
-    if (!parsedRule) return fail(400, 'Invalid rule')
+  if (typeof body !== 'string' || !parseCanonicalTestPayload(body)) {
+    return fail(400, 'body must be a test payload built by the dashboard')
   }
   if (
-    secret !== undefined &&
-    (typeof secret !== 'string' || secret.length > MAX_SECRET_LENGTH)
+    signature !== undefined &&
+    (typeof signature !== 'string' || !SIGNATURE_FORMAT.test(signature))
   ) {
-    return fail(400, 'Invalid secret')
+    return fail(400, 'Invalid signature')
   }
 
   let parsedUrl: URL
@@ -121,18 +118,11 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // The payload is always built here, never forwarded from the caller (#261).
-  const bodyString = JSON.stringify(
-    buildTestWebhookPayload({
-      contractId,
-      network: network as Network,
-      rule: parsedRule,
-    })
-  )
+  // Only dashboard-built test payloads are forwarded (#261), byte for byte,
+  // with the browser's signature header passed through unchanged.
+  const bodyString = body
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-  if (typeof secret === 'string' && secret) {
-    headers[SIGNATURE_HEADER] = await signWebhookPayload(secret, bodyString)
-  }
+  if (typeof signature === 'string') headers[SIGNATURE_HEADER] = signature
 
   try {
     const res = await deliverWebhook(parsedUrl, bodyString, headers, TIMEOUT_MS)

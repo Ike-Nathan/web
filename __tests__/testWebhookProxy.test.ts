@@ -29,6 +29,8 @@ vi.mock('@/lib/webhookProxy', async (importOriginal) => ({
 import type { NextRequest } from 'next/server'
 import { POST } from '@/app/api/test-webhook/route'
 import { deliverWebhook } from '@/lib/webhookProxy'
+import { buildTestWebhookPayload } from '@/lib/api'
+import { SIGNATURE_HEADER, signWebhookPayload } from '@/lib/webhookSignature'
 
 const CID = 'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4'
 let ipCounter = 0
@@ -45,34 +47,82 @@ function request(
   } as unknown as NextRequest
 }
 
+const testBody = (
+  overrides: Partial<Parameters<typeof buildTestWebhookPayload>[0]> = {}
+) =>
+  JSON.stringify(
+    buildTestWebhookPayload({ contractId: CID, network: 'testnet', ...overrides })
+  )
+
 const valid = {
   url: 'https://hooks.example.com/x',
-  contractId: CID,
-  network: 'testnet',
+  body: testBody(),
 }
 
 beforeEach(() => vi.mocked(deliverWebhook).mockClear())
 
 describe('POST /api/test-webhook', () => {
-  it('builds the payload server-side and ignores a forwarded payload', async () => {
-    const res = await POST(
-      request({
-        ...valid,
-        rule: { type: 'FunctionCalled', function_name: 'swap' },
-        payload: { spam: true },
-      })
-    )
-    expect(res.status).toBe(200)
-    const [url, body] = vi.mocked(deliverWebhook).mock.calls[0]
-    expect(String(url)).toBe(valid.url)
-    expect(JSON.parse(body)).toMatchObject({
-      contract_id: CID,
-      network: 'testnet',
-      rule_triggered: 'FunctionCalled',
-      function_name: 'swap',
-      is_test: true,
+  it('forwards a dashboard-built body and its signature verbatim', async () => {
+    const body = testBody({
+      rule: { type: 'FunctionCalled', function_name: 'swap' },
     })
-    expect(JSON.parse(body)).not.toHaveProperty('spam')
+    const signature = await signWebhookPayload('whsec_browser_only', body)
+    const res = await POST(request({ url: valid.url, body, signature }))
+    expect(res.status).toBe(200)
+    const [url, sent, headers] = vi.mocked(deliverWebhook).mock.calls[0]
+    expect(String(url)).toBe(valid.url)
+    expect(sent).toBe(body)
+    expect(headers[SIGNATURE_HEADER]).toBe(signature)
+  })
+
+  it('sends no signature header when the browser sent none', async () => {
+    await POST(request(valid))
+    const [, , headers] = vi.mocked(deliverWebhook).mock.calls[0]
+    expect(headers).not.toHaveProperty(SIGNATURE_HEADER)
+  })
+
+  it('rejects a request that carries the signing secret', async () => {
+    const res = await POST(request({ ...valid, secret: 'whsec_leaked' }))
+    expect(res.status).toBe(400)
+    expect(deliverWebhook).not.toHaveBeenCalled()
+  })
+
+  it('never logs the request body', async () => {
+    const spies = (['log', 'info', 'warn', 'error', 'debug'] as const).map(
+      (method) => vi.spyOn(console, method).mockImplementation(() => {})
+    )
+    try {
+      await POST(request({ ...valid, signature: `sha256=${'a'.repeat(64)}` }))
+      await POST(request({ ...valid, body: '{"spam":true}' }))
+      for (const spy of spies) {
+        for (const call of spy.mock.calls) {
+          expect(JSON.stringify(call)).not.toMatch(/is_test|spam|sha256=/)
+        }
+      }
+    } finally {
+      spies.forEach((spy) => spy.mockRestore())
+    }
+  })
+
+  it.each([
+    ['arbitrary JSON', '{"spam":true}'],
+    ['a non-test payload', testBody().replace('"is_test":true', '"is_test":false')],
+    [
+      'a payload with extra fields',
+      JSON.stringify({ ...JSON.parse(testBody()), extra: 'x' }),
+    ],
+    [
+      'a tampered horizon link',
+      JSON.stringify({
+        ...JSON.parse(testBody()),
+        horizon_link: 'https://evil.example/tx',
+      }),
+    ],
+    ['an invalid contract', testBody({ contractId: 'CNOPE' })],
+  ])('refuses to relay %s', async (_label, body) => {
+    const res = await POST(request({ ...valid, body }))
+    expect(res.status).toBe(400)
+    expect(deliverWebhook).not.toHaveBeenCalled()
   })
 
   it.each([
@@ -125,14 +175,15 @@ describe('POST /api/test-webhook', () => {
   })
 
   it('caps the body size', async () => {
-    const res = await POST(request({ ...valid, secret: 'x'.repeat(5000) }))
+    const res = await POST(request({ ...valid, padding: 'x'.repeat(5000) }))
     expect(res.status).toBe(413)
   })
 
   it.each([
-    [{ ...valid, contractId: 'nope' }],
-    [{ ...valid, network: 'devnet' }],
-    [{ ...valid, rule: { type: 'Bogus' } }],
+    [{ url: valid.url }],
+    [{ ...valid, signature: 'sha256=nothex' }],
+    [{ ...valid, signature: 42 }],
+    [{ ...valid, url: 42 }],
     ['not json'],
   ])('rejects invalid input %j', async (body) => {
     expect((await POST(request(body))).status).toBe(400)

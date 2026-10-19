@@ -1,6 +1,10 @@
 import type { AlertRule, Network, WatchedContract } from '@/types'
 import { isAlertRuleType, parseAlertRule } from '@/types'
-import { isValidContractId, validateWebhookUrl } from '@/lib/stellar'
+import {
+  isValidContractId,
+  validateWebhookUrl,
+  type WebhookUrlErrorCode,
+} from '@/lib/stellar'
 import { sanitizeAdminFunctionNames } from '@/lib/soroban'
 
 /** Export file format, aligned with WatchedContract (uses contract_id, not address). */
@@ -97,7 +101,6 @@ const NOTIFICATION_PREFERENCES: NotificationPreference[] = [
 
 /** Normalizes unknown settings input, falling back to defaults per field. */
 export function normalizeSettings(input: unknown): BackupSettings {
-function normalizeSettings(input: unknown): BackupSettings {
   if (typeof input !== 'object' || input === null)
     return { ...DEFAULT_BACKUP_SETTINGS }
   const s = input as Record<string, unknown>
@@ -173,22 +176,19 @@ function validateRule(rule: unknown): AlertRule | string {
   return parsed
 }
 
-/** User-facing message for each validateWebhookUrl result code. */
-function webhookUrlErrorMessage(code: string): string {
-  switch (code) {
-    case 'invalid_url':
-      return 'invalid webhook_url: must be a valid URL'
-    case 'credentials':
-      return 'invalid webhook_url: must not contain credentials'
-    case 'http_mainnet':
-      return 'invalid webhook_url: http is not allowed on mainnet'
-    case 'loopback':
-      return 'invalid webhook_url: loopback addresses are not allowed'
-    case 'private':
-      return 'invalid webhook_url: private network addresses are not allowed'
-    default:
-      return `invalid webhook_url: ${code}`
-  }
+/** Import error message for each blocking validateWebhookUrl code. */
+const WEBHOOK_URL_IMPORT_ERRORS: Record<
+  Exclude<WebhookUrlErrorCode, 'http_warning'>,
+  string
+> = {
+  invalid_url: 'invalid webhook_url: must be a valid URL',
+  credentials_in_url: 'invalid webhook_url: must not contain credentials',
+  http_on_mainnet: 'invalid webhook_url: http is not allowed on mainnet; use https',
+  loopback_not_allowed: 'invalid webhook_url: loopback addresses are not allowed',
+  private_ip_not_allowed:
+    'invalid webhook_url: private network addresses are not allowed',
+  link_local_not_allowed:
+    'invalid webhook_url: link-local addresses are not allowed',
 }
 
 /** Returns a normalized contract or an error message for a single entry. */
@@ -203,14 +203,12 @@ export function validateContractEntry(
   if (!NETWORKS.includes(e.network as Network)) return 'invalid network'
   if (typeof e.webhook_url !== 'string') return 'invalid webhook_url: must be a string'
   const urlResult = validateWebhookUrl(e.webhook_url, e.network as Network)
-  if (urlResult.code !== 'ok' && urlResult.code !== 'http_warning') {
-    return webhookUrlErrorMessage(urlResult.code)
+  if (!urlResult.valid && urlResult.code && urlResult.code !== 'http_warning') {
+    return WEBHOOK_URL_IMPORT_ERRORS[urlResult.code]
   }
   if (e.webhook_secret !== undefined && typeof e.webhook_secret !== 'string') {
     return 'webhook_secret must be a string'
   }
-  if (typeof e.webhook_url !== 'string' || !isValidUrl(e.webhook_url))
-    return 'invalid webhook_url'
   if (!Array.isArray(e.rules)) return 'rules must be an array'
   const rules: AlertRule[] = []
   for (const rule of e.rules) {
