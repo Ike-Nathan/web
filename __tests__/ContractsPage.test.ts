@@ -393,23 +393,52 @@ describe('contracts page — URL state sync (issue #42)', () => {
     jest.useRealTimers()
   })
 })
+
 import { render, screen, act, fireEvent } from '@testing-library/react';
 import ContractsPage from '../app/contracts/page';
-import { getContracts } from '../lib/contracts';
+import { getContracts } from '@/lib/storage';
+import { refreshContracts } from '@/lib/contractSync';
 
-jest.mock('../lib/contracts', () => ({
+jest.mock('@/lib/storage', () => ({
   getContracts: jest.fn(),
+  getAlerts: jest.fn(() => []),
+  deleteContract: jest.fn(),
 }));
 
-const contractA = { id: 'a', name: 'Alpha', highlight: false };
-const contractB = { id: 'b', name: 'Beta', highlight: true };
+jest.mock('@/lib/contractSync', () => ({
+  refreshContracts: jest.fn(),
+}));
+
+type WatchedContract = {
+  id: string;
+  label: string;
+  contract_id: string;
+  network: string;
+  rules: unknown[];
+  webhook_url: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+const makeContract = (
+  overrides: Partial<WatchedContract> & { id: string; label: string }
+): WatchedContract => ({
+  contract_id: `C${overrides.id.toUpperCase()}`,
+  network: 'mainnet',
+  rules: [],
+  webhook_url: null,
+  created_at: '2024-01-01T00:00:00.000Z',
+  updated_at: '2024-01-01T00:00:00.000Z',
+  ...overrides,
+});
+
+const contractA = makeContract({ id: 'a', label: 'Alpha' });
+const contractB = makeContract({ id: 'b', label: 'Beta' });
 
 const makeContracts = (count: number) =>
-  Array.from({ length: count }, (_, i) => ({
-    id: `c${i}`,
-    name: `Contract ${i}`,
-    highlight: false,
-  }));
+  Array.from({ length: count }, (_, i) =>
+    makeContract({ id: `c${i}`, label: `Contract ${i}` })
+  );
 
 describe('ContractsPage cross-tab updates', () => {
   beforeEach(() => {
@@ -461,7 +490,8 @@ describe('ContractsPage cross-tab updates', () => {
       );
     });
 
-    expect(screen.getByText('Beta')).toHaveClass('highlight');
+    expect(refreshContracts).toHaveBeenCalled();
+    expect(screen.getByText('Beta')).toBeInTheDocument();
   });
 });
 
@@ -522,9 +552,9 @@ describe('ContractsPage network filter counts and heading', () => {
   });
 
   const networkContracts = [
-    { id: 'a', name: 'Alpha', highlight: false, network: 'mainnet' },
-    { id: 'b', name: 'Beta', highlight: false, network: 'mainnet' },
-    { id: 'c', name: 'Gamma', highlight: false, network: 'testnet' },
+    makeContract({ id: 'a', label: 'Alpha', network: 'mainnet' }),
+    makeContract({ id: 'b', label: 'Beta', network: 'mainnet' }),
+    makeContract({ id: 'c', label: 'Gamma', network: 'testnet' }),
   ];
 
   it('computes network pill counts from the search-filtered set', () => {

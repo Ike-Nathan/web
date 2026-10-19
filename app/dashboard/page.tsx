@@ -1,15 +1,14 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useContracts } from '@/lib/useContracts'
-import { getTodayAlertCount, getAlerts, getNetworkDistribution, onAlertsChange } from '@/lib/storage'
+import { getAlerts, getNetworkDistribution } from '@/lib/storage'
 import ContractCard from '@/components/ContractCard'
 import EmptyState from '@/components/EmptyState'
 import NetworkBadge from '@/components/NetworkBadge'
 import DashboardSkeleton from '@/components/DashboardSkeleton'
-import { Network, Alert } from '@/types'
+import { Network, AlertPayload } from '@/types'
 
 const DAY_MS = 24 * 60 * 60 * 1000
 const HOUR_MS = 60 * 60 * 1000
@@ -19,7 +18,7 @@ interface AlertBucket {
   count: number
 }
 
-function bucketAlerts(alerts: Alert[], now: number, bucketMs: number, bucketCount: number): AlertBucket[] {
+function bucketAlerts(alerts: AlertPayload[], now: number, bucketMs: number, bucketCount: number): AlertBucket[] {
   const buckets: AlertBucket[] = []
   for (let i = bucketCount - 1; i >= 0; i--) {
     const start = now - (i + 1) * bucketMs
@@ -105,16 +104,18 @@ const DASHBOARD_CARD_LIMIT = 6
 export default function DashboardPage() {
   const { contracts } = useContracts()
   const [alertsToday, setAlertsToday] = useState(0)
-  const [allAlerts, setAllAlerts] = useState<Alert[]>([])
+  const [allAlerts, setAllAlerts] = useState<AlertPayload[]>([])
   const [mounted, setMounted] = useState(false)
 
   const refreshAlertsToday = useCallback(() => {
-    setAlertsToday(getTodayAlertCount())
-    const collected: Alert[] = []
+    const collected: AlertPayload[] = []
     for (const contract of contracts) {
       collected.push(...getAlerts(contract.contract_id))
     }
     setAllAlerts(collected)
+    const startOfToday = new Date()
+    startOfToday.setHours(0, 0, 0, 0)
+    setAlertsToday(collected.filter((a) => a.timestamp >= startOfToday.getTime()).length)
     setMounted(true)
   }, [contracts])
 
@@ -130,13 +131,6 @@ export default function DashboardPage() {
 
   useEffect(() => {
     refreshAlertsToday()
-    setMounted(true)
-  }, [refreshAlertsToday])
-
-  // Recompute when alerts change (e.g. another tab or a future API sync).
-  useEffect(() => {
-    const unsubscribe = onAlertsChange(refreshAlertsToday)
-    return unsubscribe
   }, [refreshAlertsToday])
 
   // Recompute when the window regains focus.
@@ -174,6 +168,7 @@ export default function DashboardPage() {
   }
 
   if (!mounted) return <DashboardSkeleton />
+
   // Sort by most recent alert (descending), then by label (ascending).
   const sortedContracts = [...contracts].sort((a, b) => {
     const aAlert = lastAlertTime(a.contract_id) ?? 0
@@ -184,8 +179,6 @@ export default function DashboardPage() {
 
   const visibleContracts = sortedContracts.slice(0, DASHBOARD_CARD_LIMIT)
   const hasMoreContracts = sortedContracts.length > DASHBOARD_CARD_LIMIT
-
-  if (!mounted) return null
 
   return (
     <div className="space-y-8">
@@ -257,8 +250,14 @@ export default function DashboardPage() {
           <EmptyState
             title="No contracts yet"
             description="Add your first Soroban contract to start monitoring events and alerts."
-            actionLabel="Add Contract"
-            actionHref="/contracts/new"
+            action={
+              <Link
+                href="/contracts/new"
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-sm font-medium text-white transition-colors"
+              >
+                Add Contract
+              </Link>
+            }
           />
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">

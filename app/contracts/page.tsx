@@ -25,6 +25,12 @@ import ContractCard from '@/components/ContractCard'
 import EmptyState from '@/components/EmptyState'
 import ContractsSkeleton from '@/components/ContractsSkeleton'
 import { useToast } from '@/components/ToastProvider'
+import { getContracts, getAlerts, deleteContract } from '@/lib/storage'
+import { refreshContracts, syncSaveContract } from '@/lib/contractSync'
+import ContractCard from '@/components/ContractCard'
+import EmptyState from '@/components/EmptyState'
+import ContractsSkeleton from '@/components/ContractsSkeleton'
+import { networkDotColors } from '@/components/NetworkBadge'
 
 type NetworkFilter = 'all' | Network
 
@@ -261,6 +267,18 @@ export default function ContractsPage() {
     setSelectionMode(false)
   }
 
+  const handlePauseSelected = () => {
+    for (const id of selectedIds) {
+      const contract = allContracts.find(c => c.id === id)
+      if (contract) {
+        syncSaveContract({ ...contract, enabled: false }, false)
+      }
+    }
+    setAllContracts((prev) => prev.map((c) => selectedIds.includes(c.id) ? { ...c, enabled: false } : c))
+    setSelectedIds([])
+    setSelectionMode(false)
+  }
+
   if (!mounted) return <ContractsSkeleton />
 
   const hasAnyContracts = allContracts.length > 0
@@ -324,6 +342,32 @@ export default function ContractsPage() {
           ))}
         </div>
 
+        <div className="flex flex-wrap items-center gap-2">
+          <label htmlFor="contract-sort" className="sr-only">
+            Sort contracts
+          </label>
+          <select
+            id="contract-sort"
+            value={sortBy}
+            onChange={(event) => {
+              const next = event.target.value as SortOption
+              setSortBy(next)
+              writePrefs({ sortBy: next })
+            }}
+            className="rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 focus:border-indigo-500 focus:outline-none"
+          >
+            {SORT_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+
+          <div
+            className="flex items-center gap-1 rounded-lg border border-zinc-800 bg-zinc-900 p-1"
+            role="group"
+            aria-label="View mode"
+          >
         <div className="flex items-center gap-2">
           {hasAnyContracts && (
             <div className="relative">
@@ -356,12 +400,13 @@ export default function ContractsPage() {
               return (
                 <button
                   key={mode}
+                  type="button"
                   onClick={() => {
                     setViewMode(mode)
                     saveContractPrefs({ viewMode: mode, sortBy })
                   }}
                   aria-pressed={isActive}
-                  className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                  className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
                     isActive
                       ? 'bg-indigo-600 text-white'
                       : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800'
@@ -376,6 +421,7 @@ export default function ContractsPage() {
           <button
             type="button"
             onClick={toggleSelectionMode}
+            className={`rounded-lg px-3 py-2 text-sm font-medium ${
             className={`rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
               selectionMode
                 ? 'bg-indigo-600 text-white hover:bg-indigo-500'
@@ -436,6 +482,22 @@ export default function ContractsPage() {
       ) : !hasFilteredContracts ? (
         <EmptyState
           title="No matching contracts"
+          description="Try adjusting your search or filters."
+        />
+      ) : viewMode === 'flat' ? (
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {paginated.map((contract) => (
+            <ContractCard
+              key={contract.id}
+              contract={contract}
+              highlight={contract.id === highlightedId}
+              selectable={selectionMode}
+              selected={selectedIds.includes(contract.id)}
+              onToggleSelect={toggleSelected}
+            />
+          ))}
+        </div>
+      ) : (
           description="Try adjusting your search or filter."
         />
       ) : viewMode === 'grouped' ? (
@@ -454,11 +516,12 @@ export default function ContractsPage() {
                     <ContractCard
                       key={contract.id}
                       contract={contract}
-                      highlighted={contract.id === highlightedId}
-                      selectionMode={selectionMode}
+                      highlight={contract.id === highlightedId}
+                      selectable={selectionMode}
                       selected={selectedIds.includes(contract.id)}
                       onToggleSelected={toggleSelected}
                       syncStatus={syncStatuses[contract.id]}
+                      onToggleSelect={toggleSelected}
                     />
                   ))}
                 </div>
@@ -482,6 +545,23 @@ export default function ContractsPage() {
         </div>
       )}
 
+      {viewMode === 'flat' && totalPages > 1 && (
+        <div className="flex items-center justify-center gap-2 mt-6">
+          <button
+            type="button"
+      )}
+
+      {totalPages > 1 && (
+        <div className="flex items-center justify-center gap-2">
+          <button
+            type="button"
+            onClick={() => setPage((prev) => Math.max(1, prev - 1))}
+            disabled={page === 1}
+            className="rounded-lg bg-zinc-800 px-3 py-2 text-sm text-zinc-100 hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            Previous
+          </button>
+          <span className="text-sm text-zinc-400">
       {viewMode === 'flat' && totalPages > 1 && (
         <div className="flex items-center justify-center gap-2 mt-6">
           <button
