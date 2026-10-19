@@ -9,7 +9,7 @@ export type AlertRuleType =
   | 'FunctionCalled'
   | 'TransactionFailed'
 
-export const ALERT_RULE_TYPES: readonly AlertRuleType[] = [
+const ALERT_RULE_TYPES: readonly AlertRuleType[] = [
   'LargeTransfer',
   'AdminFunctionCalled',
   'AnyTransaction',
@@ -18,7 +18,10 @@ export const ALERT_RULE_TYPES: readonly AlertRuleType[] = [
 ]
 
 export function isAlertRuleType(value: unknown): value is AlertRuleType {
-  return typeof value === 'string' && (ALERT_RULE_TYPES as readonly string[]).includes(value)
+  return (
+    typeof value === 'string' &&
+    (ALERT_RULE_TYPES as readonly string[]).includes(value)
+  )
 }
 
 /** Fields shared by every rule variant. `enabled` defaults to true when absent. */
@@ -46,13 +49,23 @@ export function parseAlertRule(value: unknown): AlertRule | null {
   if (typeof value !== 'object' || value === null) return null
   const r = value as Record<string, unknown>
   if (!isAlertRuleType(r.type)) return null
-  const base: AlertRuleBase = typeof r.enabled === 'boolean' ? { enabled: r.enabled } : {}
+  const base: AlertRuleBase =
+    typeof r.enabled === 'boolean' ? { enabled: r.enabled } : {}
   switch (r.type) {
     case 'LargeTransfer':
-      if (typeof r.threshold_xlm !== 'number' || !isFinite(r.threshold_xlm) || r.threshold_xlm < 0) return null
+      if (
+        typeof r.threshold_xlm !== 'number' ||
+        !isFinite(r.threshold_xlm) ||
+        r.threshold_xlm < 0
+      )
+        return null
       return { ...base, type: r.type, threshold_xlm: r.threshold_xlm }
     case 'AdminFunctionCalled': {
-      if (!Array.isArray(r.function_names) || !r.function_names.every((n) => typeof n === 'string')) return null
+      if (
+        !Array.isArray(r.function_names) ||
+        !r.function_names.every((n) => typeof n === 'string')
+      )
+        return null
       const names = (r.function_names as string[]).map((n) => n.trim())
       if (!names.every((n) => isValidFunctionName(n))) return null
       return { ...base, type: r.type, function_names: names }

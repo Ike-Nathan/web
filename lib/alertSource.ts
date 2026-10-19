@@ -13,7 +13,7 @@ export interface FetchAlertsOptions {
   signal?: AbortSignal
 }
 
-export const ALERT_POLL_INTERVAL_MS = 30000
+const ALERT_POLL_INTERVAL_MS = 30000
 
 export function isApiConfigured(): boolean {
   return Boolean(process.env.NEXT_PUBLIC_API_URL)
@@ -24,14 +24,16 @@ export async function fetchAlerts(
   network: Network | string,
   { since, signal }: FetchAlertsOptions = {}
 ): Promise<AlertPayload[]> {
-  const qs = new URLSearchParams({ contract_id: contractId, network: String(network) })
+  const qs = new URLSearchParams({
+    contract_id: contractId,
+    network: String(network),
+  })
   if (since !== undefined) qs.set('since', String(since))
-  const body = await apiFetch<AlertPayload[] | { alerts: AlertPayload[] } | undefined>(
-    `/alerts?${qs.toString()}`,
-    { signal }
-  )
+  const body = await apiFetch<
+    AlertPayload[] | { alerts: AlertPayload[] } | undefined
+  >(`/alerts?${qs.toString()}`, { signal })
   if (!body) return []
-  return Array.isArray(body) ? body : body.alerts ?? []
+  return Array.isArray(body) ? body : (body.alerts ?? [])
 }
 
 /**
@@ -40,7 +42,7 @@ export async function fetchAlerts(
  * stored alert is uniquely identifiable even though the core payload
  * carries no `id`.
  */
-export function alertKey(
+function alertKey(
   a: Pick<AlertPayload, 'transaction_hash' | 'rule_triggered' | 'timestamp'>
 ): string {
   return `${a.transaction_hash}::${a.rule_triggered}::${a.timestamp}`
@@ -63,23 +65,6 @@ export function filterNewAlerts(
 }
 
 /**
- * Parse the cached `txwatch_alerts` array once and return the latest alert
- * timestamp per contract id. Avoids re-parsing the whole array for every card
- * on every render (e.g. while typing in the search box).
- */
-export function getLatestAlertTimestamps(): Record<string, number> {
-  const latest: Record<string, number> = {}
-  for (const alert of getAlerts()) {
-    const id = alert.contract_id
-    if (!id) continue
-    const ts = alert.timestamp
-    if (typeof ts !== 'number') continue
-    if (latest[id] === undefined || ts > latest[id]) latest[id] = ts
-  }
-  return latest
-}
-
-/**
  * Fetch alerts from core and merge new ones into the local cache.
  * Returns the newly added alerts (oldest first).
  */
@@ -90,9 +75,12 @@ export async function syncAlerts(
 ): Promise<AlertPayload[]> {
   const local = getAlerts(contractId)
   const since =
-    opts.since ?? (local.length ? Math.max(...local.map((a) => a.timestamp)) : undefined)
+    opts.since ??
+    (local.length ? Math.max(...local.map((a) => a.timestamp)) : undefined)
   const fetched = await fetchAlerts(contractId, network, { ...opts, since })
-  const fresh = filterNewAlerts(local, fetched).sort((a, b) => a.timestamp - b.timestamp)
+  const fresh = filterNewAlerts(local, fetched).sort(
+    (a, b) => a.timestamp - b.timestamp
+  )
   fresh.forEach((a) => addAlert(a))
   return fresh
 }
@@ -128,7 +116,8 @@ export function startAlertPolling(
       inFlight = false
     }
   }
-  const visible = () => typeof document === 'undefined' || document.visibilityState !== 'hidden'
+  const visible = () =>
+    typeof document === 'undefined' || document.visibilityState !== 'hidden'
   const start = () => {
     if (timer) return
     void tick()
@@ -141,7 +130,8 @@ export function startAlertPolling(
   const onVisibility = () => (visible() ? start() : pause())
 
   if (visible()) start()
-  if (typeof document !== 'undefined') document.addEventListener('visibilitychange', onVisibility)
+  if (typeof document !== 'undefined')
+    document.addEventListener('visibilitychange', onVisibility)
   return () => {
     stopped = true
     pause()
