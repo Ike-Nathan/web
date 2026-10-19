@@ -26,7 +26,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-// Minimal shape checks so corrupted entries are dropped instead of crashing consumers.
 function isValidContract(value: unknown): value is WatchedContract {
   return (
     isRecord(value) &&
@@ -68,7 +67,7 @@ function load<T>(key: string): T[] {
   return valid as T[]
 }
 
-const STORAGE_QUOTA_BYTES = 5 * 1024 * 1024 // 5MB typical limit
+const STORAGE_QUOTA_BYTES = 5 * 1024 * 1024 
 const MAX_ALERTS_PER_CONTRACT = 500
 const DEFAULT_RETENTION_DAYS = 90
 
@@ -104,7 +103,7 @@ function getStorageSize(): number {
     if (!key) continue
     const value = storage.getItem(key)
     if (value !== null) {
-      size += (value.length + key.length) * 2 // UTF-16: 2 bytes per code unit
+      size += (value.length + key.length) * 2 
     }
   }
   return size
@@ -126,8 +125,6 @@ export function pruneOldAlerts() {
   }
 }
 
-// Trims alerts to the user's retention window and per-contract cap, dropping
-// the oldest alerts first. Used when storage is near quota.
 function trimAlertsToRetention() {
   const storage = getStorage()
   if (!storage) return
@@ -155,7 +152,6 @@ function isQuotaError(err: unknown): boolean {
   )
 }
 
-// Writes a value; on quota errors prunes old alerts and retries once.
 function writeItem(storage: Storage, key: string, value: string): boolean {
   try {
     storage.setItem(key, value)
@@ -229,7 +225,6 @@ export function migrateStorage(migrations: Record<number, () => void>) {
   setStorageVersion(CURRENT_STORAGE_VERSION)
 }
 
-// Migration v2: add the `enabled` flag (default true) to every watched contract.
 export function migrateContractsToV2() {
   const contracts = getContracts()
   const migrated = contracts.map((c) => ({
@@ -280,9 +275,6 @@ export function addContract(contract: WatchedContract) {
   saveContract(contract)
 }
 
-// Writes the given contracts verbatim, preserving server-provided timestamps.
-// Unlike saveContract, this never rewrites `updated_at`, so refreshing from the
-// server does not mark every contract as "modified just now" (#251).
 export function replaceContracts(list: WatchedContract[]): boolean {
   const normalized = list.map((c) => ({ ...c, enabled: c.enabled ?? true }))
   return save(CONTRACTS_KEY, normalized)
@@ -290,6 +282,14 @@ export function replaceContracts(list: WatchedContract[]): boolean {
 
 export function saveContract(contract: WatchedContract): boolean {
   const contracts = getContracts()
+
+  const duplicate = contracts.find(
+    (c) => c.contract_id === contract.contract_id && c.network === contract.network && c.id !== contract.id
+  )
+  if (duplicate) {
+    throw new DuplicateContractError(contract.contract_id, contract.network)
+  }
+
   const updated = { ...contract, enabled: contract.enabled ?? true, updated_at: Date.now() }
   const index = contracts.findIndex((c) => c.id === contract.id)
   if (index === -1) {
@@ -329,14 +329,11 @@ export function deleteAlerts(contractId: string) {
   save(ALERTS_KEY, alerts.filter((a) => a.contract_id !== contractId))
 }
 
-// Persists a full alert list (used by the import flow to restore a backup).
 export function replaceAlerts(alerts: AlertPayload[]): boolean {
   const valid = alerts.filter((a) => isValidAlert(a))
   return save(ALERTS_KEY, valid)
 }
 
-// Rewrites `contract_id` on every alert matching `oldContractId` so alert history
-// survives when an imported contract is re-keyed under a new id.
 export function rekeyAlerts(oldContractId: string, newContractId: string): boolean {
   if (oldContractId === newContractId) return true
   const alerts = load<AlertPayload>(ALERTS_KEY)
@@ -418,8 +415,6 @@ export function seedMockAlerts(
   }
 }
 
-// Reads every TxWatch key from the registry into a plain object for backup/export.
-// Returns only the keys that are actually present in storage.
 export function exportAllStorageData(): Record<string, string> {
   const storage = getStorage()
   const data: Record<string, string> = {}
@@ -431,9 +426,6 @@ export function exportAllStorageData(): Record<string, string> {
   return data
 }
 
-// Removes only the given registry keys (or every TxWatch key when none are given)
-// from localStorage and sessionStorage. Never calls clear(), so data belonging to
-// other apps on the same origin is preserved.
 export function clearTxWatchStorage(keys: string[] = TXWATCH_KEYS): void {
   const targets = keys.filter((key) => TXWATCH_KEYS.includes(key))
   const stores: Storage[] = []
@@ -465,7 +457,6 @@ export function addAlert(alert: AlertPayload | (AlertPayload & { contractId?: st
   return normalizedAlert
 }
 
-// Enforces the per-(contract_id, network) alert cap, dropping the oldest entries.
 function capAlertsPerContract(alerts: AlertPayload[]): AlertPayload[] {
   const cap = getAlertCap()
   const groups = new Map<string, AlertPayload[]>()
