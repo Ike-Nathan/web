@@ -2,16 +2,15 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { useWalletState } from '@/hooks/useWalletState'
-import { NetworkBadge } from '@/components/NetworkBadge'
+import NetworkBadge from '@/components/NetworkBadge'
 import { subscribeWallet } from '@/lib/walletEvents'
-import type { Network } from '@/lib/networks'
+import type { Network } from '@/types'
 import {
   connectFreighter,
   FreighterUnavailableError,
   openFreighterInstallPage,
+  readFreighterConnection,
 } from '@/lib/freighter'
-
-const WALLET_STORAGE_KEY = 'freighter_public_key'
 
 /**
  * Maps a raw Freighter network id (e.g. `PUBLIC`, `TESTNET`) to the app's
@@ -73,12 +72,9 @@ export default function FreighterConnect({
     let cancelled = false
 
     const syncNetwork = async () => {
-      if (!window.freighter) return
       try {
-        const net = window.freighter.getNetwork
-          ? await window.freighter.getNetwork()
-          : null
-        if (!cancelled) setNetwork(net)
+        const connection = await readFreighterConnection()
+        if (!cancelled) setNetwork(connection?.network ?? null)
       } catch {
         // Ignore network read errors
       }
@@ -86,15 +82,12 @@ export default function FreighterConnect({
 
     syncNetwork()
 
-    const unsubscribe = subscribeWallet((event) => {
-      if (event.type === 'connected' && event.publicKey) {
-        window.__freighterPublicKey = event.publicKey
+    const unsubscribe = subscribeWallet((key) => {
+      if (key) {
         setMissingExtension(false)
         syncNetwork()
-      } else if (event.type === 'disconnected') {
+      } else {
         setNetwork(null)
-      } else if (event.type === 'networkChanged') {
-        setNetwork(event.network ?? null)
       }
     })
 
@@ -128,26 +121,11 @@ export default function FreighterConnect({
     setError(null)
 
     try {
-      if (!window.freighter) {
-        setMissingExtension(true)
-        setError('Freighter not installed - install the extension and reload')
-        return
-      }
-
       setMissingExtension(false)
-      const session = await connectFreighter()
-      const net = window.freighter?.getNetwork
-        ? await window.freighter.getNetwork()
-        : null
-      publish(session.publicKey)
-      setNetwork(net)
-      window.__freighterPublicKey = session.publicKey
-      localStorage.setItem(WALLET_STORAGE_KEY, session.publicKey)
-      onConnect?.(session.publicKey)
       const session = await connectFreighter()
       publish(session.publicKey)
       setNetwork(session.network ?? null)
-      setMissingExtension(false)
+      onConnect?.(session.publicKey)
     } catch (err) {
       if (err instanceof FreighterUnavailableError) {
         setMissingExtension(true)
@@ -278,18 +256,7 @@ export default function FreighterConnect({
             type="button"
             onClick={async () => {
               setError(null)
-              try {
-                const session = await connectFreighter()
-                publish(session.publicKey)
-                setNetwork(session.network ?? null)
-                setMissingExtension(false)
-              } catch (err) {
-                if (err instanceof FreighterUnavailableError) {
-                  setError('Freighter extension still not detected')
-                } else {
-                  setError(err instanceof Error ? err.message : 'Connection rejected')
-                }
-              }
+              await connect()
             }}
             className="inline-flex items-center px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-xs text-zinc-200 border border-zinc-700 transition-colors self-start"
           >

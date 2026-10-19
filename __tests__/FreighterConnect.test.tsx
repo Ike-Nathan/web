@@ -296,6 +296,7 @@ describe('FreighterConnect', () => {
       })
       expect(onConnect).toHaveBeenCalledWith(MOCK_PUBLIC_KEY)
       expect(localStorage.getItem(WALLET_STORAGE_KEY)).toBeNull()
+      expect((window as any).__freighterPublicKey).toBeUndefined()
     })
 
     it('does not leave a stale key behind after disconnecting', async () => {

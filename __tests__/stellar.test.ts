@@ -6,6 +6,7 @@ import {
   mapFreighterNetwork,
   validateWebhookUrl,
 } from '@/lib/stellar'
+import { FREIGHTER_NETWORK_BY_CHAIN, CHAIN_BY_FREIGHTER_NETWORK } from '@/lib/freighter'
 
 describe('isValidContractId', () => {
   it('accepts valid contract IDs', () => {
@@ -70,6 +71,36 @@ describe('mapFreighterNetwork', () => {
     expect(mapFreighterNetwork(undefined)).toBeNull()
     expect(mapFreighterNetwork('')).toBeNull()
     expect(mapFreighterNetwork('LOCALNET')).toBeNull()
+  })
+})
+
+describe('consolidated Freighter network maps', () => {
+  it('maps every app chain to its Freighter network id', () => {
+    expect(FREIGHTER_NETWORK_BY_CHAIN.mainnet).toBe('PUBLIC')
+    expect(FREIGHTER_NETWORK_BY_CHAIN.testnet).toBe('TESTNET')
+    expect(FREIGHTER_NETWORK_BY_CHAIN.futurenet).toBe('FUTURENET')
+  })
+
+  it('maps every Freighter network id back to its app chain', () => {
+    expect(CHAIN_BY_FREIGHTER_NETWORK.PUBLIC).toBe('mainnet')
+    expect(CHAIN_BY_FREIGHTER_NETWORK.TESTNET).toBe('testnet')
+    expect(CHAIN_BY_FREIGHTER_NETWORK.FUTURENET).toBe('futurenet')
+  })
+
+  it('is bidirectional for every network', () => {
+    for (const [chain, freighterNetwork] of Object.entries(FREIGHTER_NETWORK_BY_CHAIN)) {
+      expect(CHAIN_BY_FREIGHTER_NETWORK[freighterNetwork]).toBe(chain)
+    }
+    for (const [freighterNetwork, chain] of Object.entries(CHAIN_BY_FREIGHTER_NETWORK)) {
+      expect(FREIGHTER_NETWORK_BY_CHAIN[chain]).toBe(freighterNetwork)
+    }
+  })
+
+  it('agrees with mapFreighterNetwork for every Freighter network id', () => {
+    for (const [freighterNetwork, chain] of Object.entries(CHAIN_BY_FREIGHTER_NETWORK)) {
+      expect(mapFreighterNetwork(freighterNetwork)).toBe(chain)
+      expect(mapFreighterNetwork(freighterNetwork.toLowerCase())).toBe(chain)
+    }
   })
 })
 

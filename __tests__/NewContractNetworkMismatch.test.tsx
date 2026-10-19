@@ -2,6 +2,14 @@ import { vi } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import NewContractPage from '@/app/contracts/new/page'
 
+const freighterApi = vi.hoisted(() => ({
+  isConnected: vi.fn(),
+  getAddress: vi.fn(),
+  getNetworkDetails: vi.fn(),
+}))
+
+vi.mock('@stellar/freighter-api', () => freighterApi)
+
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn() }),
 }))
@@ -27,19 +35,21 @@ vi.mock('@/lib/stellar', async (importOriginal) => {
 
 describe('NewContractPage - Network Mismatch & Acknowledgement (#12, #13)', () => {
   beforeEach(() => {
-    delete (window as any).freighter
     delete (window as any).__freighterPublicKey
     localStorage.clear()
     vi.clearAllMocks()
+    freighterApi.isConnected.mockResolvedValue({ isConnected: true })
+    freighterApi.getAddress.mockResolvedValue({
+      address: 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+    })
+    freighterApi.getNetworkDetails.mockResolvedValue({
+      network: 'PUBLIC',
+      networkUrl: 'https://horizon.stellar.org',
+      networkPassphrase: 'Public Global Stellar Network ; September 2015',
+    })
   })
 
   it('detects network mismatch automatically on initial mount when connected', async () => {
-    ;(window as any).freighter = {
-      isConnected: vi.fn().mockResolvedValue(true),
-      getPublicKey: vi.fn().mockResolvedValue('GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'),
-      getNetwork: vi.fn().mockResolvedValue('PUBLIC'),
-    }
-
     render(<NewContractPage />)
 
     // Default network is testnet, wallet is on PUBLIC -> mismatch warning should appear without dropdown change
@@ -54,11 +64,7 @@ describe('NewContractPage - Network Mismatch & Acknowledgement (#12, #13)', () =
   })
 
   it('detects network mismatch after connecting wallet post-mount', async () => {
-    ;(window as any).freighter = {
-      isConnected: vi.fn().mockResolvedValue(false),
-      getPublicKey: vi.fn().mockResolvedValue('GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'),
-      getNetwork: vi.fn().mockResolvedValue('PUBLIC'),
-    }
+    freighterApi.isConnected.mockResolvedValue({ isConnected: false })
 
     render(<NewContractPage />)
 
@@ -68,7 +74,7 @@ describe('NewContractPage - Network Mismatch & Acknowledgement (#12, #13)', () =
     ).not.toBeInTheDocument()
 
     // User connects wallet
-    ;(window as any).freighter.isConnected = vi.fn().mockResolvedValue(true)
+    freighterApi.isConnected.mockResolvedValue({ isConnected: true })
     const connectBtn = await screen.findByRole('button', { name: /Connect Freighter/i })
     fireEvent.click(connectBtn)
 
@@ -80,12 +86,6 @@ describe('NewContractPage - Network Mismatch & Acknowledgement (#12, #13)', () =
   })
 
   it('clears warning when wallet disconnects', async () => {
-    ;(window as any).freighter = {
-      isConnected: vi.fn().mockResolvedValue(true),
-      getPublicKey: vi.fn().mockResolvedValue('GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'),
-      getNetwork: vi.fn().mockResolvedValue('PUBLIC'),
-    }
-
     render(<NewContractPage />)
 
     await waitFor(() => {
@@ -95,6 +95,7 @@ describe('NewContractPage - Network Mismatch & Acknowledgement (#12, #13)', () =
     })
 
     // Disconnect
+    freighterApi.isConnected.mockResolvedValue({ isConnected: false })
     const disconnectBtn = screen.getByRole('button', { name: /Disconnect/i })
     fireEvent.click(disconnectBtn)
 

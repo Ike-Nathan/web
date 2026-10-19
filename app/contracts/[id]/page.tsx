@@ -79,19 +79,16 @@ export default function ContractDetailPage({ params }: { params: { id: string } 
 
   useEffect(() => {
     async function checkWalletNetwork() {
-      if (typeof window === 'undefined' || !window.freighter || !contract) return
+      if (typeof window === 'undefined' || !contract) return
       try {
-        const connected = await window.freighter.isConnected()
-        if (!connected) {
+        const connection = await readFreighterConnection()
+        if (!connection.connected) {
           setWalletNetworkMismatch(null)
           return
         }
-        const rawNet = await window.freighter.getNetwork()
-        const mappedNet = mapFreighterNetwork(rawNet)
-        if (mappedNet && mappedNet !== contract.network) {
-          setWalletNetworkMismatch(
-            `Wallet is on ${rawNet}, but this contract is monitored on ${contract.network.toUpperCase()}`
-          )
+        const walletNetwork = await getWalletNetwork()
+        if (walletNetwork && walletNetwork !== contract.network) {
+          setWalletNetworkMismatch(networkMismatchWarning(walletNetwork, contract.network))
         } else {
           setWalletNetworkMismatch(null)
         }

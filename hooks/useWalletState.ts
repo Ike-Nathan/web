@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { WatchWalletChanges } from '@stellar/freighter-api'
+import { readFreighterConnection } from '@/lib/freighter'
 import { broadcastWalletChange, subscribeWallet } from '@/lib/walletEvents'
 
 /**
@@ -48,7 +49,7 @@ export function useWalletWatcher(): void {
 export interface WalletState {
   /** Connected public key, or null while disconnected. */
   publicKey: string | null
-  /** True once the initial `window.freighter` probe has settled. */
+  /** True once the initial Freighter connection probe has settled. */
   initialized: boolean
   /** Set the wallet state everywhere, including this instance. */
   publish: (publicKey: string | null) => void
@@ -78,11 +79,9 @@ export function useWalletState(): WalletState {
 
     async function probe() {
       try {
-        if (!window.freighter) return
-        const connected = await window.freighter.isConnected()
-        if (!connected || cancelled) return
-        const key = await window.freighter.getPublicKey()
-        if (!cancelled) publish(key)
+        const connection = await readFreighterConnection()
+        if (!connection?.publicKey || cancelled) return
+        publish(connection.publicKey)
       } catch {
         // Extension refused to answer; stay in the disconnected state.
       } finally {

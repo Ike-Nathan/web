@@ -27,6 +27,7 @@ export function explorerContractUrl(
 
 /**
  * Maps Freighter network strings (e.g. PUBLIC, TESTNET, FUTURENET) to the app Network type (#8).
+ * Delegates to the canonical bidirectional map in lib/freighter.ts (#187).
  */
 export function mapFreighterNetwork(
   freighterNetwork: string | null | undefined

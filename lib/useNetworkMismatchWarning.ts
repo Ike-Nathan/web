@@ -1,18 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { Network } from '@/types'
-
-/** Freighter's network names for the networks the app supports. */
-const FREIGHTER_NETWORKS: Record<Network, string> = {
-  testnet: 'TESTNET',
-  mainnet: 'PUBLIC',
-  futurenet: 'FUTURENET',
-}
-
-/** Warning text for a wallet/contract network mismatch, or null when they agree. */
-export function networkMismatchWarning(walletNetwork: string, network: Network): string | null {
-  if (walletNetwork === FREIGHTER_NETWORKS[network]) return null
-  return `Your wallet is on ${walletNetwork}, but this contract is on ${network.toUpperCase()}`
-}
+import { getWalletNetwork, networkMismatchWarning, readFreighterConnection } from '@/lib/freighter'
 
 /**
  * Warns when the connected wallet's network does not match the selected
@@ -26,13 +14,14 @@ export function useNetworkMismatchWarning(network: Network, isConnected: boolean
   const [networkWarning, setNetworkWarning] = useState<string | null>(null)
 
   const checkNetworkMismatch = useCallback(async () => {
-    if (typeof window === 'undefined' || !window.freighter) {
-      // No extension: there is no wallet network to compare against.
+    const connection = await readFreighterConnection()
+    if (!connection.available || !connection.connected) {
+      // No extension or no connected wallet: nothing to compare against.
       setNetworkWarning(null)
       return
     }
     try {
-      const walletNetwork = await window.freighter.getNetwork()
+      const walletNetwork = await getWalletNetwork()
       setNetworkWarning(networkMismatchWarning(walletNetwork, network))
     } catch {
       // Locked or disconnected wallet: nothing to warn about.
@@ -44,12 +33,13 @@ export function useNetworkMismatchWarning(network: Network, isConnected: boolean
     let active = true
 
     async function run() {
-      if (typeof window === 'undefined' || !window.freighter) {
+      const connection = await readFreighterConnection()
+      if (!connection.available || !connection.connected) {
         if (active) setNetworkWarning(null)
         return
       }
       try {
-        const walletNetwork = await window.freighter.getNetwork()
+        const walletNetwork = await getWalletNetwork()
         if (active) setNetworkWarning(networkMismatchWarning(walletNetwork, network))
       } catch {
         if (active) setNetworkWarning(null)
