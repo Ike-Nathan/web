@@ -1,4 +1,5 @@
 import { AlertPayload, Network, WatchedContract } from '@/types'
+import { hasActiveWebhooks } from '@/lib/contractsApi'
 
 export type AlertSeverity = 'low' | 'medium' | 'high' | 'critical'
 
@@ -55,6 +56,7 @@ function groupKey(alert: AlertRecord | AlertPayload, groupBy: AlertGroupBy): str
   const value =
     groupBy === 'network'
       ? alert.network
+      : (alert as { ruleType?: string }).ruleType ?? (alert as AlertPayload).rule_triggered
       : (alert as any).ruleType ?? (alert as AlertPayload).rule_triggered
   return value && value.trim().length > 0 ? value : 'unknown'
 }
@@ -101,6 +103,10 @@ export function bucketAlerts(
 
   for (const alert of alerts) {
     const time =
+      typeof (alert as { timestamp?: unknown }).timestamp === 'number'
+        ? ((alert as { timestamp: number }).timestamp)
+        : toDate((alert as { createdAt?: string | Date }).createdAt ?? (alert as { timestamp?: string | number | Date }).timestamp ?? 0).getTime()
+    if (Number.isNaN(time) || time === 0) continue
       typeof (alert as any).timestamp === 'number'
         ? (alert as any).timestamp
         : toDate((alert as any).createdAt ?? (alert as any).timestamp).getTime()
@@ -132,6 +138,20 @@ export function migrateWatchedContracts(
 ): WatchedContract[] {
   return contracts.map((contract) => ({
     ...contract,
+    enabled: (contract as { enabled?: boolean }).enabled ?? true,
+  })) as WatchedContract[]
+}
+
+export function isContractPaused(contract: { enabled?: boolean; paused?: boolean }): boolean {
+  return contract.enabled === false || contract.paused === true
+}
+
+/**
+ * Unifies definition of active webhooks across the application:
+ * contract must be enabled and have a non-empty webhook URL.
+ */
+export function countActiveWebhooks(contracts: WatchedContract[]): number {
+  return contracts.filter(hasActiveWebhooks).length
     enabled: (contract as any).enabled ?? true,
   })) as WatchedContract[]
 }
