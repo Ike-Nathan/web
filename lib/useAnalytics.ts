@@ -18,6 +18,13 @@ export type AnalyticsEventName =
   | 'rule_removed'
   | 'metadata_edit_opened'
   | 'metadata_edit_saved'
+  | 'network_switched'
+  | 'contract_created'
+  | 'contract_deleted'
+  | 'test_webhook_sent'
+  | 'import_applied'
+  | 'contract_paused'
+  | 'contract_resumed'
 
 export interface AnalyticsEventProperties {
   contractId?: string

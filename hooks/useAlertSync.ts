@@ -10,6 +10,8 @@ export interface AlertSyncState {
   /** Epoch ms of the last successful sync. */
   lastSync: number | null
   enabled: boolean
+  /** Force an immediate poll cycle */
+  syncNow: () => void
 }
 
 /**
@@ -24,11 +26,14 @@ export function useAlertSync(
   network: Network | string | undefined,
   onNew?: (fresh: AlertPayload[]) => void
 ): AlertSyncState {
-  const [state, setState] = useState<AlertSyncState>({
+  const [state, setState] = useState<Omit<AlertSyncState, 'syncNow'>>({
     live: false,
     lastSync: null,
     enabled: false,
   })
+  const [pollTrigger, setPollTrigger] = useState(0)
+
+  const syncNow = () => setPollTrigger(p => p + 1)
 
   useEffect(() => {
     if (!contractId || !network || !isApiConfigured()) return
@@ -41,9 +46,9 @@ export function useAlertSync(
       onError: () => setState((s) => ({ ...s, live: false })),
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [contractId, network])
+  }, [contractId, network, pollTrigger])
 
-  return state
+  return { ...state, syncNow }
 }
 
 /**

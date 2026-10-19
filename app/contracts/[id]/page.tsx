@@ -6,6 +6,9 @@ import { WatchedContract, AlertPayload, AlertRule, isRuleEnabled } from '@/types
 import { syncSaveContract, syncDeleteContract } from '@/lib/contractSync'
 import { getContract, getAlerts, getContractByIdAndNetwork, getContracts } from '@/lib/storage'
 import { truncateId, explorerContractUrl, isValidUrl, mapFreighterNetwork } from '@/lib/stellar'
+import { formatDate, formatRelativeTime, formatRuleSummary, maskWebhookUrl } from '@/lib/format'
+import { useAnalytics } from '@/lib/useAnalytics'
+import { useNow } from '@/lib/useNow'
 import { formatDate, formatRuleSummary } from '@/lib/format'
 import { useAnalytics } from '@/lib/useAnalytics'
 import { useToast } from '@/components/ToastProvider'
@@ -24,6 +27,7 @@ export default function ContractDetailPage({ params }: { params: { id: string } 
   const router = useRouter()
   const { trackEvent } = useAnalytics()
   const { showToast } = useToast()
+  const now = useNow(60_000)
   const [contract, setContract] = useState<WatchedContract | null>(null)
   const [alerts, setAlerts] = useState<AlertPayload[]>([])
   const [mounted, setMounted] = useState(false)
@@ -98,6 +102,7 @@ export default function ContractDetailPage({ params }: { params: { id: string } 
   }, [contract])
 
   function handleDelete() {
+    trackEvent('contract_deleted', { contractId: params.id })
     void syncDeleteContract(params.id)
     router.push('/contracts')
   }
@@ -112,6 +117,7 @@ export default function ContractDetailPage({ params }: { params: { id: string } 
   async function saveRules() {
     if (editedRules.length === 0) { setRulesError('Add at least one rule'); return }
     const updated = { ...contract!, rules: editedRules }
+    const { saved, syncPromise } = syncSaveContract(updated, false)
     const { saved, sync } = syncSaveContract(updated, false)
     if (!saved) {
       setRulesError('Could not save: browser storage is full or conflict occurred')
@@ -121,6 +127,7 @@ export default function ContractDetailPage({ params }: { params: { id: string } 
     setShowEditRules(false)
     trackEvent('rule_edit_saved', { contractId: params.id, ruleCount: editedRules.length })
     
+    const result = await syncPromise
     const result = await sync
     if (!result.ok) showToast(result.error || 'API Sync Error', 'error')
   }
@@ -128,6 +135,11 @@ export default function ContractDetailPage({ params }: { params: { id: string } 
   async function toggleRule(index: number) {
     const rules = contract!.rules.map((r, i) => (i === index ? { ...r, enabled: !isRuleEnabled(r) } : r))
     const updated = { ...contract!, rules }
+    const { saved, syncPromise } = syncSaveContract(updated, false)
+    if (!saved) return
+    setContract(updated)
+
+    const result = await syncPromise
     const { saved, sync } = syncSaveContract(updated, false)
     if (!saved) return
     setContract(updated)
@@ -139,6 +151,13 @@ export default function ContractDetailPage({ params }: { params: { id: string } 
   async function toggleContractPause() {
     const isEnabled = contract?.enabled ?? true
     const updated = { ...contract!, enabled: !isEnabled }
+    const { saved, syncPromise } = syncSaveContract(updated, false)
+    if (!saved) return
+    setContract(updated)
+
+    trackEvent(updated.enabled ? 'contract_resumed' : 'contract_paused', { contractId: params.id })
+
+    const result = await syncPromise
     const { saved, sync } = syncSaveContract(updated, false)
     if (!saved) return
     setContract(updated)
@@ -155,6 +174,7 @@ export default function ContractDetailPage({ params }: { params: { id: string } 
     if (hasUnsavedChanges()) {
       setShowUnsavedWarning(true)
     } else {
+      trackEvent('rule_edit_cancelled', { contractId: params.id })
       setShowEditRules(false)
     }
   }
@@ -162,6 +182,7 @@ export default function ContractDetailPage({ params }: { params: { id: string } 
   function confirmDiscard() {
     setShowUnsavedWarning(false)
     setShowEditRules(false)
+    trackEvent('rule_edit_cancelled', { contractId: params.id })
   }
 
   function openEditMetadata() {
@@ -199,6 +220,7 @@ export default function ContractDetailPage({ params }: { params: { id: string } 
       webhook_url: trimmedWebhookUrl,
       network: editedNetwork
     }
+    const { saved, syncPromise } = syncSaveContract(updated, false)
     const { saved, sync } = syncSaveContract(updated, false)
     if (!saved) {
       setMetadataError('Could not save: browser storage is full or conflict occurred')
@@ -214,6 +236,7 @@ export default function ContractDetailPage({ params }: { params: { id: string } 
     setShowEditMetadata(false)
     trackEvent('metadata_edit_saved', { contractId: params.id })
 
+    const result = await syncPromise
     const result = await sync
     if (!result.ok) showToast(result.error || 'API Sync Error', 'error')
   }
@@ -373,6 +396,8 @@ export default function ContractDetailPage({ params }: { params: { id: string } 
             </div>
 
             <NetworkEditField
+              currentNetwork={editedNetwork}
+              onNetworkChange={setEditedNetwork}
               value={editedNetwork}
               onChange={setEditedNetwork}
             />
@@ -488,13 +513,45 @@ export default function ContractDetailPage({ params }: { params: { id: string } 
       <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-5 space-y-3">
         <h2 className="text-sm font-semibold text-zinc-300">Webhook</h2>
         <div className="flex items-center gap-2">
-          <span className="text-sm font-mono text-zinc-400 break-all">{contract.webhook_url}</span>
+          <span className="text-sm font-mono text-zinc-400 break-all">{maskWebhookUrl(contract.webhook_url)}</span>
           <CopyButton text={contract.webhook_url} />
         </div>
       </div>
 
       {/* Alerts */}
       <div className="space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4">
+            <h2 className="text-lg font-semibold text-zinc-100">Alerts</h2>
+            {sync.enabled && (
+              <div className="flex items-center gap-2 text-xs bg-zinc-900/50 px-3 py-1.5 rounded-lg border border-zinc-800">
+                {sync.live ? (
+                  <span className="text-emerald-400 flex items-center gap-1.5" data-testid="sync-status-live">
+                    <span className="relative flex h-2 w-2">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                    </span>
+                    Live · synced {sync.lastSync ? formatRelativeTime(sync.lastSync, now) : 'just now'}
+                  </span>
+                ) : (
+                  <span className="text-red-400 flex items-center gap-1" data-testid="sync-status-error">
+                    <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    Sync failing
+                  </span>
+                )}
+                <div className="w-px h-3 bg-zinc-700 mx-1"></div>
+                <button 
+                  onClick={sync.syncNow} 
+                  className="text-zinc-400 hover:text-zinc-200 transition-colors font-medium" 
+                  data-testid="sync-now-button"
+                >
+                  Sync now
+                </button>
+              </div>
+            )}
+          </div>
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-semibold text-zinc-100">Alerts</h2>
           <NotificationToggle contractId={contract.contract_id} />
