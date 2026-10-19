@@ -1,5 +1,14 @@
 'use client'
 
+import { useState, useRef, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
+import { AlertRule, Network, WatchedContract } from '@/types'
+import { isValidContractId, isValidUrl, normalizeContractId, contractExists } from '@/lib/stellar'
+import { syncSaveContract } from '@/lib/contractSync'
+import { addContract, saveContract, getContracts } from '@/lib/storage'
+import { generateWebhookSecret } from '@/lib/webhookSignature'
+import { buildTestWebhookPayload, sendTestWebhook } from '@/lib/api'
+import { generateId } from '@/lib/id'
 import { useState, useRef, useEffect, useMemo, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { AlertPayload, AlertRule, Network, WatchedContract } from '@/types'
@@ -14,6 +23,7 @@ import { useFreighterConnection } from '@/lib/useFreighterConnection'
 import { useNetworkMismatchWarning } from '@/lib/useNetworkMismatchWarning'
 import RuleBuilder from '@/components/RuleBuilder'
 import FreighterConnect from '@/components/FreighterConnect'
+import WebhookTestButton from '@/components/WebhookTestButton'
 import { useToast } from '@/components/ToastProvider'
 
 interface FormErrors {
@@ -41,6 +51,7 @@ export default function NewContractPage() {
   const [webhookUrl, setWebhookUrl] = useState('')
   const [webhookSecret, setWebhookSecret] = useState('')
   const [rules, setRules] = useState<AlertRule[]>([])
+  const [selectedRuleIndex, setSelectedRuleIndex] = useState<number>(0)
   
   const [errors, setErrors] = useState<FormErrors>({})
   const [saving, setSaving] = useState(false)
@@ -61,6 +72,13 @@ export default function NewContractPage() {
   // Draft Restoration State
   const [draftExists, setDraftExists] = useState(false)
   const DRAFT_KEY = 'txwatch_new_contract_draft'
+
+  // Warns on mount, on network change, and after connecting, not only when the
+  // network <select> changes.
+  const { networkWarning, checkNetworkMismatch, clearNetworkWarning } =
+    useNetworkMismatchWarning(network, isConnected)
+
+  const hasNetworkMismatch = Boolean(networkWarning)
 
   const isDirty = Boolean(
     label.trim() || contractId.trim() || webhookUrl.trim() || webhookSecret.trim() || rules.length > 0
@@ -186,22 +204,21 @@ export default function NewContractPage() {
       if (typeof data.webhook_url === 'string') setWebhookUrl(data.webhook_url)
       if (Array.isArray(data.rules)) setRules(data.rules)
     } catch {
+      // ignore malformed pre-fill data
       // ignore
     }
   }, [])
 
   useEffect(() => {
-    if (isConnected) {
-      checkNetworkMismatch(network)
-    } else {
-      setNetworkWarning(null)
-      setHasNetworkMismatch(false)
+    if (!isConnected) {
       setMismatchAcknowledged(false)
     }
-  }, [network, isConnected, checkNetworkMismatch])
+  }, [isConnected])
 
   function handleWalletConnect() {
     setErrors((prev) => ({ ...prev, wallet: undefined }))
+    // The wallet's network is only knowable once it is connected.
+    void checkNetworkMismatch(network)
     checkNetworkMismatch(network)
   }
 
@@ -386,15 +403,22 @@ export default function NewContractPage() {
   async function handleTestWebhook() {
     const url = webhookUrl.trim()
     if (!url) {
-      setTestStatus('error')
-      setTestError('Enter a webhook URL first.')
+      setErrors((prev) => ({ ...prev, webhook_url: 'Webhook URL is required to test' }))
       return
     }
     if (!isValidUrl(url)) {
-      setTestStatus('error')
-      setTestError('Must be a valid http/https URL')
+      setErrors((prev) => ({ ...prev, webhook_url: 'Must be a valid http/https URL' }))
       return
     }
+    const payload = buildTestWebhookPayload({
+      contractId: contractId.trim(),
+      network,
+      rule: rules[0],
+    })
+    return sendTestWebhook(url, {
+      payload,
+      secret: webhookSecret || undefined,
+    })
 
     testAbortRef.current?.abort()
     const controller = new AbortController()
@@ -558,6 +582,7 @@ export default function NewContractPage() {
                 setErrors((prev) => ({ ...prev, network: undefined }))
                 checkNetworkMismatch(n)
                 setContractNotFoundWarning(null)
+                void checkNetworkMismatch(n)
                 if (isValidContractId(contractId.trim())) {
                   void checkContractOnNetwork(contractId.trim(), n)
                 }
@@ -605,6 +630,12 @@ export default function NewContractPage() {
             {errors.webhook_url && <p className="text-xs text-red-400 mt-1">{errors.webhook_url}</p>}
           </div>
 
+          {/* Rules */}
+          <div ref={rulesRef}>
+            <label className="block text-sm font-medium text-zinc-300 mb-1.5">Alert Rules</label>
+            <RuleBuilder rules={rules} onChange={setRules} />
+            {errors.rules && <p className="text-xs text-red-400 mt-1">{errors.rules}</p>}
+          </div>
           {/* Test Payload Rule Selection and Preview (#24) */}
           {webhookUrl && (
             <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-3 space-y-2">
@@ -648,6 +679,33 @@ export default function NewContractPage() {
               {errors.wallet && <p className="text-xs text-red-400 mt-1">{errors.wallet}</p>}
             </div>
           )}
+        </div>
+
+        <div className="flex items-center gap-3 pt-2">
+          <button
+            type="button"
+            onClick={handleSave}
+            disabled={saving || !isFormValid()}
+            className="flex-1 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium rounded-lg px-4 py-2.5 transition-colors"
+          >
+            {saving ? 'Saving…' : 'Save Contract'}
+          </button>
+          <button
+            type="button"
+            onClick={handleCancel}
+            className="px-4 py-2.5 rounded-lg border border-zinc-700 hover:border-zinc-500 text-sm text-zinc-400 hover:text-zinc-200 transition-colors"
+          >
+            Cancel
+          </button>
+          <WebhookTestButton
+            webhookUrl={webhookUrl}
+            contractId={contractId}
+            network={network}
+            webhookSecret={webhookSecret}
+            onTest={handleTestWebhook}
+            onError={(field, message) => setErrors((prev) => ({ ...prev, [field]: message }))}
+            className="mt-0"
+          />
 
           {/* Rules */}
           <div ref={rulesRef}>

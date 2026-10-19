@@ -4,6 +4,8 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { WatchedContract, AlertPayload, AlertRule, isRuleEnabled } from '@/types'
 import { syncSaveContract, syncDeleteContract } from '@/lib/contractSync'
+import { getContract, deleteContract, getAlerts, saveContract, seedMockAlerts, getContracts } from '@/lib/storage'
+import { truncateId, explorerContractUrl, isValidUrl, mapFreighterNetwork } from '@/lib/stellar'
 import { getContract, getAlerts, getContractByIdAndNetwork, getContracts } from '@/lib/storage'
 import { truncateId, explorerContractUrl, isValidUrl, mapFreighterNetwork } from '@/lib/stellar'
 import { formatDate, formatRelativeTime, formatRuleSummary, maskWebhookUrl } from '@/lib/format'
@@ -401,6 +403,32 @@ export default function ContractDetailPage({ params }: { params: { id: string } 
               value={editedNetwork}
               onChange={setEditedNetwork}
             />
+          </div>
+          <NetworkEditField
+            currentNetwork={editedNetwork}
+            onNetworkChange={setEditedNetwork}
+            checkDuplicate={(network) => {
+              const existing = getContract(contract!.contract_id)
+              return !!existing && existing.network === network
+            }}
+            onAlertHistoryCleared={() => setAlerts([])}
+          />
+          {metadataError && (
+            <p className="text-sm text-red-400">{metadataError}</p>
+          )}
+          <div className="flex justify-end gap-2 pt-2">
+            <button
+              onClick={handleCancelMetadataEdit}
+              className="px-3 py-1.5 rounded-lg border border-zinc-700 hover:border-zinc-500 text-sm text-zinc-300 hover:text-zinc-100 transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={saveMetadata}
+              className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-sm font-medium text-white transition-colors"
+            >
+              Save
+            </button>
 
             {metadataError && (
               <p className="text-sm text-red-400">{metadataError}</p>
@@ -451,6 +479,36 @@ export default function ContractDetailPage({ params }: { params: { id: string } 
               </button>
             </div>
           </div>
+        </div>
+      </Modal>
+
+      {/* Delete Modal */}
+      <Modal
+        open={showDelete}
+        onClose={() => setShowDelete(false)}
+        title="Delete Contract"
+        destructive
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-zinc-400">
+            Are you sure you want to delete <span className="font-medium text-zinc-200">{contract.label}</span>? This action cannot be undone.
+          </p>
+          <div className="flex justify-end gap-2 pt-2">
+            <button
+              onClick={() => setShowDelete(false)}
+              className="px-3 py-1.5 rounded-lg border border-zinc-700 hover:border-zinc-500 text-sm text-zinc-300 hover:text-zinc-100 transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleDelete}
+              className="px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-500 text-sm font-medium text-white transition-colors"
+            >
+              Delete
+            </button>
+          </div>
+        </div>
+      </Modal>
         </Modal>
       )}
 
@@ -482,6 +540,7 @@ export default function ContractDetailPage({ params }: { params: { id: string } 
         ) : (
           <ul className="space-y-2">
             {contract.rules.map((rule, i) => (
+              <li
               <div
                 key={i}
                 data-testid="active-rule"
@@ -503,7 +562,7 @@ export default function ContractDetailPage({ params }: { params: { id: string } 
                 >
                   {isRuleEnabled(rule) ? 'On' : 'Off'}
                 </button>
-              </div>
+              </li>
             ))}
           </ul>
         )}
@@ -516,6 +575,11 @@ export default function ContractDetailPage({ params }: { params: { id: string } 
           <span className="text-sm font-mono text-zinc-400 break-all">{maskWebhookUrl(contract.webhook_url)}</span>
           <CopyButton text={contract.webhook_url} />
         </div>
+        <NotificationToggle />
+      </div>
+
+      {/* Webhook log */}
+      <WebhookLog alerts={alerts} network={contract.network} />
       </div>
 
       {/* Alerts */}
