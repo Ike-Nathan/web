@@ -9,6 +9,15 @@ import { truncateId, explorerContractUrl, isValidUrl, mapFreighterNetwork } from
 import { formatDate, formatRelativeTime, formatRuleSummary, maskWebhookUrl } from '@/lib/format'
 import { useAnalytics } from '@/lib/useAnalytics'
 import { useNow } from '@/lib/useNow'
+import { getContract, deleteContract, getAlerts, saveContract, seedMockAlerts, getContracts } from '@/lib/storage'
+import { truncateId, explorerContractUrl, isValidUrl, mapFreighterNetwork } from '@/lib/stellar'
+import { getContract, getAlerts, getContractByIdAndNetwork, getContracts } from '@/lib/storage'
+import { truncateId, explorerContractUrl, isValidUrl, mapFreighterNetwork } from '@/lib/stellar'
+import { formatDate, formatRelativeTime, formatRuleSummary, maskWebhookUrl } from '@/lib/format'
+import { useAnalytics } from '@/lib/useAnalytics'
+import { useNow } from '@/lib/useNow'
+import { formatDate, formatRuleSummary } from '@/lib/format'
+import { useAnalytics } from '@/lib/useAnalytics'
 import { useToast } from '@/components/ToastProvider'
 import NetworkBadge from '@/components/NetworkBadge'
 import NetworkEditField from '@/components/NetworkEditField'
@@ -116,6 +125,7 @@ export default function ContractDetailPage({ params }: { params: { id: string } 
     if (editedRules.length === 0) { setRulesError('Add at least one rule'); return }
     const updated = { ...contract!, rules: editedRules }
     const { saved, syncPromise } = syncSaveContract(updated, false)
+    const { saved, sync } = syncSaveContract(updated, false)
     if (!saved) {
       setRulesError('Could not save: browser storage is full or conflict occurred')
       return
@@ -125,6 +135,7 @@ export default function ContractDetailPage({ params }: { params: { id: string } 
     trackEvent('rule_edit_saved', { contractId: params.id, ruleCount: editedRules.length })
     
     const result = await syncPromise
+    const result = await sync
     if (!result.ok) showToast(result.error || 'API Sync Error', 'error')
   }
 
@@ -149,6 +160,32 @@ export default function ContractDetailPage({ params }: { params: { id: string } 
     trackEvent(updated.enabled ? 'contract_resumed' : 'contract_paused', { contractId: params.id })
 
     const result = await syncPromise
+    setContract(updated)
+
+    const result = await syncPromise
+    const { saved, sync } = syncSaveContract(updated, false)
+    if (!saved) return
+    setContract(updated)
+
+    const result = await sync
+    if (!result.ok) showToast(result.error || 'API Sync Error', 'error')
+  }
+
+  async function toggleContractPause() {
+    const isEnabled = contract?.enabled ?? true
+    const updated = { ...contract!, enabled: !isEnabled }
+    const { saved, syncPromise } = syncSaveContract(updated, false)
+    if (!saved) return
+    setContract(updated)
+
+    trackEvent(updated.enabled ? 'contract_resumed' : 'contract_paused', { contractId: params.id })
+
+    const result = await syncPromise
+    const { saved, sync } = syncSaveContract(updated, false)
+    if (!saved) return
+    setContract(updated)
+
+    const result = await sync
     if (!result.ok) showToast(result.error || 'API Sync Error', 'error')
   }
 
@@ -213,6 +250,8 @@ export default function ContractDetailPage({ params }: { params: { id: string } 
     }
 
     const { saved, syncPromise } = syncSaveContract(updated, false)
+    const { saved, syncPromise } = syncSaveContract(updated, false)
+    const { saved, sync } = syncSaveContract(updated, false)
     if (!saved) {
       setMetadataError('Could not save: browser storage is full or conflict occurred')
       return
@@ -228,6 +267,7 @@ export default function ContractDetailPage({ params }: { params: { id: string } 
     trackEvent('metadata_edit_saved', { contractId: params.id })
 
     const result = await syncPromise
+    const result = await sync
     if (!result.ok) showToast(result.error || 'API Sync Error', 'error')
   }
 
@@ -412,6 +452,58 @@ export default function ContractDetailPage({ params }: { params: { id: string } 
         </div>
       )}
 
+              value={editedNetwork}
+              onChange={setEditedNetwork}
+            />
+          </div>
+          <NetworkEditField
+            currentNetwork={editedNetwork}
+            onNetworkChange={setEditedNetwork}
+            checkDuplicate={(network) => {
+              const existing = getContract(contract!.contract_id)
+              return !!existing && existing.network === network
+            }}
+            onAlertHistoryCleared={() => setAlerts([])}
+          />
+          {metadataError && (
+            <p className="text-sm text-red-400">{metadataError}</p>
+          )}
+          <div className="flex justify-end gap-2 pt-2">
+            <button
+              onClick={handleCancelMetadataEdit}
+              className="px-3 py-1.5 rounded-lg border border-zinc-700 hover:border-zinc-500 text-sm text-zinc-300 hover:text-zinc-100 transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={saveMetadata}
+              className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-sm font-medium text-white transition-colors"
+            >
+              Save
+            </button>
+
+            {metadataError && (
+              <p className="text-sm text-red-400">{metadataError}</p>
+            )}
+
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                onClick={handleCancelMetadataEdit}
+                className="px-3 py-1.5 rounded-lg border border-zinc-700 text-sm text-zinc-300 hover:text-zinc-100 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={saveMetadata}
+                className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-sm font-medium text-white transition-colors"
+              >
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Edit Rules Modal */}
       {showEditRules && (
         <Modal
@@ -439,6 +531,36 @@ export default function ContractDetailPage({ params }: { params: { id: string } 
               </button>
             </div>
           </div>
+        </div>
+      </Modal>
+
+      {/* Delete Modal */}
+      <Modal
+        open={showDelete}
+        onClose={() => setShowDelete(false)}
+        title="Delete Contract"
+        destructive
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-zinc-400">
+            Are you sure you want to delete <span className="font-medium text-zinc-200">{contract.label}</span>? This action cannot be undone.
+          </p>
+          <div className="flex justify-end gap-2 pt-2">
+            <button
+              onClick={() => setShowDelete(false)}
+              className="px-3 py-1.5 rounded-lg border border-zinc-700 hover:border-zinc-500 text-sm text-zinc-300 hover:text-zinc-100 transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleDelete}
+              className="px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-500 text-sm font-medium text-white transition-colors"
+            >
+              Delete
+            </button>
+          </div>
+        </div>
+      </Modal>
         </Modal>
       )}
 
@@ -470,6 +592,7 @@ export default function ContractDetailPage({ params }: { params: { id: string } 
         ) : (
           <ul className="space-y-2">
             {contract.rules.map((rule, i) => (
+              <li
               <div
                 key={i}
                 data-testid="active-rule"
@@ -491,7 +614,7 @@ export default function ContractDetailPage({ params }: { params: { id: string } 
                 >
                   {isRuleEnabled(rule) ? 'On' : 'Off'}
                 </button>
-              </div>
+              </li>
             ))}
           </ul>
         )}
@@ -504,6 +627,13 @@ export default function ContractDetailPage({ params }: { params: { id: string } 
           <span className="text-sm font-mono text-zinc-400 break-all">{maskWebhookUrl(contract.webhook_url)}</span>
           <CopyButton text={contract.webhook_url} />
         </div>
+      </div>
+
+        <NotificationToggle />
+      </div>
+
+      {/* Webhook log */}
+      <WebhookLog alerts={alerts} network={contract.network} />
       </div>
 
       {/* Alerts */}
@@ -540,6 +670,8 @@ export default function ContractDetailPage({ params }: { params: { id: string } 
               </div>
             )}
           </div>
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-semibold text-zinc-100">Alerts</h2>
           <NotificationToggle contractId={contract.contract_id} />
         </div>
         {alerts.length === 0 ? (

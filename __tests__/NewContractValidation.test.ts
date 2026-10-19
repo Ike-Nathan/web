@@ -1,5 +1,5 @@
 import { isValidContractId, isValidUrl } from '@/lib/stellar'
-import { AlertRule, Network, WatchedContract } from '@/types'
+import type { AlertRule, Network, WatchedContract } from '@/types'
 
 interface FormErrors {
   label?: string
@@ -79,13 +79,15 @@ describe('NewContract form validation (#14)', () => {
       rules: [validRule],
     })
     expect(emptyRes.label).toBe('Label is required')
-    expect(isFormValid({
-      label: '',
-      contractId: validContractId,
-      network: 'testnet',
-      webhookUrl: 'https://example.com/webhook',
-      rules: [validRule],
-    })).toBe(false)
+    expect(
+      isFormValid({
+        label: '',
+        contractId: validContractId,
+        network: 'testnet',
+        webhookUrl: 'https://example.com/webhook',
+        rules: [validRule],
+      })
+    ).toBe(false)
 
     const tooLongRes = validateForm({
       label: 'a'.repeat(101),

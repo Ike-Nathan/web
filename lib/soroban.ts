@@ -7,14 +7,14 @@
  */
 
 /** Maximum length of a Soroban symbol (function name). */
-export const MAX_FUNCTION_NAME_LENGTH = 32;
+const MAX_FUNCTION_NAME_LENGTH = 32
 
 /**
  * Pattern for a valid Soroban function name.
  * Must start with a letter or underscore, followed by up to 31
  * letters, digits, or underscores.
  */
-const FUNCTION_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]{0,31}$/;
+const FUNCTION_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]{0,31}$/
 
 /**
  * Returns true if `name` is a valid Soroban function name.
@@ -25,20 +25,20 @@ const FUNCTION_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]{0,31}$/;
  * - matches `/^[A-Za-z_][A-Za-z0-9_]{0,31}$/`
  */
 export function isValidFunctionName(name: unknown): name is string {
-  if (typeof name !== "string") {
-    return false;
+  if (typeof name !== 'string') {
+    return false
   }
   if (name.length === 0 || name.length > MAX_FUNCTION_NAME_LENGTH) {
-    return false;
+    return false
   }
-  return FUNCTION_NAME_PATTERN.test(name);
+  return FUNCTION_NAME_PATTERN.test(name)
 }
 
 export interface SanitizedAdminFunctionNames {
   /** Valid, trimmed, de-duplicated function names (in first-seen order). */
-  valid: string[];
+  valid: string[]
   /** Invalid names (trimmed) that were rejected, de-duplicated. */
-  invalid: string[];
+  invalid: string[]
 }
 
 /**
@@ -50,35 +50,35 @@ export interface SanitizedAdminFunctionNames {
  * callers can report exactly which names were rejected.
  */
 export function sanitizeAdminFunctionNames(
-  names: readonly unknown[] | null | undefined,
+  names: readonly unknown[] | null | undefined
 ): SanitizedAdminFunctionNames {
-  const valid: string[] = [];
-  const invalid: string[] = [];
-  const seenValid = new Set<string>();
-  const seenInvalid = new Set<string>();
+  const valid: string[] = []
+  const invalid: string[] = []
+  const seenValid = new Set<string>()
+  const seenInvalid = new Set<string>()
 
   if (!Array.isArray(names)) {
-    return { valid, invalid };
+    return { valid, invalid }
   }
 
   for (const entry of names) {
-    if (typeof entry !== "string") {
-      continue;
+    if (typeof entry !== 'string') {
+      continue
     }
-    const trimmed = entry.trim();
+    const trimmed = entry.trim()
     if (trimmed.length === 0) {
-      continue;
+      continue
     }
     if (isValidFunctionName(trimmed)) {
       if (!seenValid.has(trimmed)) {
-        seenValid.add(trimmed);
-        valid.push(trimmed);
+        seenValid.add(trimmed)
+        valid.push(trimmed)
       }
     } else if (!seenInvalid.has(trimmed)) {
-      seenInvalid.add(trimmed);
-      invalid.push(trimmed);
+      seenInvalid.add(trimmed)
+      invalid.push(trimmed)
     }
   }
 
-  return { valid, invalid };
+  return { valid, invalid }
 }

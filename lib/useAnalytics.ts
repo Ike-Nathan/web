@@ -10,7 +10,7 @@
  *   trackEvent('rule_edit_opened', { contractId: '...' })
  */
 
-export type AnalyticsEventName =
+type AnalyticsEventName =
   | 'rule_edit_opened'
   | 'rule_edit_saved'
   | 'rule_edit_cancelled'
@@ -18,8 +18,15 @@ export type AnalyticsEventName =
   | 'rule_removed'
   | 'metadata_edit_opened'
   | 'metadata_edit_saved'
+  | 'network_switched'
+  | 'contract_created'
+  | 'contract_deleted'
+  | 'test_webhook_sent'
+  | 'import_applied'
+  | 'contract_paused'
+  | 'contract_resumed'
 
-export interface AnalyticsEventProperties {
+interface AnalyticsEventProperties {
   contractId?: string
   ruleCount?: number
   ruleType?: string
@@ -29,7 +36,7 @@ export interface AnalyticsEventProperties {
 // Stub: replace this function body to integrate a real analytics provider.
 function trackEventStub(
   _event: AnalyticsEventName,
-  _properties?: AnalyticsEventProperties,
+  _properties?: AnalyticsEventProperties
 ): void {
   // no-op — intentionally empty until a provider is configured
 }
