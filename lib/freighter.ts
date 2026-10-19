@@ -29,8 +29,18 @@ const FREIGHTER_NOT_INSTALLED =
   'Freighter not installed — install the extension and reload'
 const FREIGHTER_CONNECTION_REJECTED = 'Connection rejected'
 
-/** Upper bound for a single round trip to the extension. */
+/** Upper bound for a single availability probe against the extension. */
 const EXTENSION_TIMEOUT_MS = 2500
+
+/**
+ * Upper bound for requests that wait on the user (e.g. approving the connect
+ * popup). These must not use the short probe timeout, otherwise a slow user is
+ * reported as "not installed".
+ */
+const USER_ACTION_TIMEOUT_MS = 120_000
+
+export const FREIGHTER_REQUEST_TIMED_OUT =
+  'Request timed out — approve the request in Freighter and try again'
 
 /** Freighter network ids for the networks the dashboard supports. */
 const FREIGHTER_NETWORK_BY_CHAIN: Record<Network, string> = {
@@ -55,6 +65,14 @@ class FreighterRejectedError extends Error {
   }
 }
 
+/** The extension is reachable but the request did not settle in time. */
+export class FreighterTimeoutError extends Error {
+  constructor(message = FREIGHTER_REQUEST_TIMED_OUT) {
+    super(message)
+    this.name = 'FreighterTimeoutError'
+  }
+}
+
 export interface FreighterSession {
   publicKey: string
   /** Freighter network id, e.g. `"TESTNET"`. */
@@ -64,10 +82,11 @@ export interface FreighterSession {
 
 function withTimeout<T>(
   request: Promise<T>,
-  ms: number = EXTENSION_TIMEOUT_MS
+  ms: number = EXTENSION_TIMEOUT_MS,
+  onTimeout: () => Error = () => new FreighterUnavailableError()
 ): Promise<T> {
   return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new FreighterUnavailableError()), ms)
+    const timer = setTimeout(() => reject(onTimeout()), ms)
     request.then(
       (value) => {
         clearTimeout(timer)
@@ -108,11 +127,13 @@ export function openFreighterInstallPage(): void {
  * Maps a Freighter network id to the app `Network`, or null for ids the
  * dashboard does not know (custom networks, future additions).
  */
-export function networkFromFreighterId(walletNetwork: string | null): Network | null {
+export function networkFromFreighterId(
+  walletNetwork: string | null
+): Network | null {
   if (!walletNetwork) return null
-  const match = (Object.entries(FREIGHTER_NETWORK_BY_CHAIN) as [Network, string][]).find(
-    ([, id]) => id === walletNetwork
-  )
+  const match = (
+    Object.entries(FREIGHTER_NETWORK_BY_CHAIN) as [Network, string][]
+  ).find(([, id]) => id === walletNetwork)
   return match ? match[0] : null
 }
 
@@ -203,7 +224,13 @@ export async function connectFreighter(): Promise<FreighterSession> {
 
   let address = ''
   try {
-    const result = await withTimeout(requestAccess())
+    // The user has to approve the popup, so this must not use the short probe
+    // timeout — a slow approval is not an unavailable extension.
+    const result = await withTimeout(
+      requestAccess(),
+      USER_ACTION_TIMEOUT_MS,
+      () => new FreighterTimeoutError()
+    )
     if (result.error) {
       throw new FreighterRejectedError(
         apiErrorMessage(result.error, FREIGHTER_CONNECTION_REJECTED)
@@ -216,7 +243,8 @@ export async function connectFreighter(): Promise<FreighterSession> {
   } catch (error) {
     if (
       error instanceof FreighterRejectedError ||
-      error instanceof FreighterUnavailableError
+      error instanceof FreighterUnavailableError ||
+      error instanceof FreighterTimeoutError
     ) {
       throw error
     }

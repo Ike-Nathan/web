@@ -9,7 +9,10 @@ describe('formatRuleSummary', () => {
   })
 
   it('formats FunctionCalled rule with function name', () => {
-    const rule: AlertRule = { type: 'FunctionCalled', function_name: 'transfer' }
+    const rule: AlertRule = {
+      type: 'FunctionCalled',
+      function_name: 'transfer',
+    }
     expect(formatRuleSummary(rule)).toBe('transfer')
   })
 
@@ -68,15 +71,15 @@ describe('formatRuleSummary', () => {
 
     // Duplicate check must run against all rules except the one being edited.
     const isDuplicateLabel = (label: string, index: number | null) =>
-      rules.some(
-        (rule, i) => i !== index && formatRuleSummary(rule) === label
-      )
+      rules.some((rule, i) => i !== index && formatRuleSummary(rule) === label)
 
     const editedLabel = formatRuleSummary(rules[0])
     expect(isDuplicateLabel(editedLabel, editingIndex)).toBe(true)
 
     // The rule being edited must not collide with itself.
-    expect(isDuplicateLabel(formatRuleSummary(rules[1]), editingIndex)).toBe(false)
+    expect(isDuplicateLabel(formatRuleSummary(rules[1]), editingIndex)).toBe(
+      false
+    )
   })
 
   it('builds a duplicate pre-fill payload with label suffix, webhook, and rules', () => {
@@ -264,7 +267,9 @@ describe('Modal keyboard interaction', () => {
     expect(overlay.getAttribute('role')).toBe('dialog')
     expect(overlay.getAttribute('aria-modal')).toBe('true')
     expect(overlay.getAttribute('aria-labelledby')).toBe('modal-title')
-    expect(document.getElementById('modal-title')?.textContent).toBe('Edit Details')
+    expect(document.getElementById('modal-title')?.textContent).toBe(
+      'Edit Details'
+    )
   })
 
   it('focuses the safe action (Cancel) by default for destructive dialogs', () => {
@@ -278,14 +283,18 @@ describe('Modal keyboard interaction', () => {
 
     // Tab forward from the last element wraps to the first.
     confirm.focus()
-    const nextIndex = (focusable.indexOf(document.activeElement as HTMLElement) + 1) % focusable.length
+    const nextIndex =
+      (focusable.indexOf(document.activeElement as HTMLElement) + 1) %
+      focusable.length
     focusable[nextIndex].focus()
     expect(document.activeElement).toBe(cancel)
 
     // Shift+Tab from the first element wraps to the last.
     cancel.focus()
     const prevIndex =
-      (focusable.indexOf(document.activeElement as HTMLElement) - 1 + focusable.length) %
+      (focusable.indexOf(document.activeElement as HTMLElement) -
+        1 +
+        focusable.length) %
       focusable.length
     focusable[prevIndex].focus()
     expect(document.activeElement).toBe(confirm)
@@ -330,7 +339,10 @@ describe('ContractDetail duplicate action (#200)', () => {
     navigate: (path: string) => void
   ) => {
     const prefill = buildDuplicatePrefill(contract)
-    sessionStorage.setItem('txwatch_duplicate_contract', JSON.stringify(prefill))
+    sessionStorage.setItem(
+      'txwatch_duplicate_contract',
+      JSON.stringify(prefill)
+    )
     navigate('/contracts/new')
   }
 
@@ -401,4 +413,3 @@ describe('ContractDetail alert history lookup regression (#26)', () => {
     expect(alertsByContractId[0].created_at).toBeDefined()
   })
 })
-

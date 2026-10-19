@@ -61,6 +61,17 @@ All types live in `types/index.ts` and must stay in sync with the Rust structs i
 `WatchedContract.enabled` is an optional boolean (`enabled?: boolean`). When the field is absent, the contract is treated as enabled (`absent = true`). Any change to this field must be mirrored in the `stellar-txwatch-core` type definitions.
 For browser-persisted data, also update the [Browser Storage Schema](docs/storage-schema.md). Changes to a stored shape need an owning type/read/write update, a versioned migration and test when existing data needs transformation, and an update to the schema reference. Do not store credentials such as webhook signing secrets in localStorage.
 
+## Branch protection and required checks
+
+`main` is protected. The following rules are enforced in the GitHub repository settings (Settings → Branches → Branch protection rules) and cannot be bypassed by contributors:
+
+- **Required status checks:** the `ci` job from `.github/workflows/ci.yml` (lint, typecheck, tests, build) must pass before a PR can be merged.
+- **Require branches to be up to date:** a PR must be rebased or merged with the latest `main` before merging, so checks run against the current base.
+- **No force-push:** force-pushing to `main` is disallowed.
+- **Code owner review:** reviews are requested automatically via `.github/CODEOWNERS`, and an approving review from a code owner is required.
+
+PRs with red or stale checks must not be merged — wait for CI to pass on the latest commit, and update the branch if it falls behind `main`. Do not use admin overrides to merge around these rules.
+
 ## Pull requests
 
 - Keep PRs focused - one feature or fix per PR

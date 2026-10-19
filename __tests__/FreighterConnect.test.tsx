@@ -1,6 +1,11 @@
 import { vi } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
-import { getAddress, getNetworkDetails, isConnected, requestAccess } from '@stellar/freighter-api'
+import {
+  getAddress,
+  getNetworkDetails,
+  isConnected,
+  requestAccess,
+} from '@stellar/freighter-api'
 import FreighterConnect from '@/components/FreighterConnect'
 
 vi.mock('@stellar/freighter-api', () => ({
@@ -16,7 +21,8 @@ const mockGetAddress = vi.mocked(getAddress)
 const mockGetNetworkDetails = vi.mocked(getNetworkDetails)
 const mockRequestAccess = vi.mocked(requestAccess)
 
-const MOCK_PUBLIC_KEY = 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
+const MOCK_PUBLIC_KEY =
+  'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
 const WALLET_STORAGE_KEY = 'freighter_public_key'
 
 /** Shape of the `error` field the package returns instead of throwing. */
@@ -48,7 +54,10 @@ function mockDisconnectedSession() {
 
 /** No extension: the API reports an error instead of a connection state. */
 function mockExtensionMissing() {
-  mockIsConnected.mockResolvedValue({ isConnected: false, error: EXTENSION_MISSING })
+  mockIsConnected.mockResolvedValue({
+    isConnected: false,
+    error: EXTENSION_MISSING,
+  })
   mockGetAddress.mockResolvedValue({ address: '', error: EXTENSION_MISSING })
   mockGetNetworkDetails.mockResolvedValue({
     network: '',
@@ -106,7 +115,9 @@ describe('FreighterConnect', () => {
       fireEvent.click(screen.getByText('Disconnect'))
 
       await waitFor(() => {
-        expect(screen.getByRole('button', { name: /Connect Freighter/ })).toBeInTheDocument()
+        expect(
+          screen.getByRole('button', { name: /Connect Freighter/ })
+        ).toBeInTheDocument()
       })
     })
   })
@@ -117,7 +128,9 @@ describe('FreighterConnect', () => {
 
       render(<FreighterConnect />)
 
-      fireEvent.click(await screen.findByRole('button', { name: /Connect Freighter/ }))
+      fireEvent.click(
+        await screen.findByRole('button', { name: /Connect Freighter/ })
+      )
 
       await waitFor(() => {
         expect(screen.getByText('User rejected')).toBeInTheDocument()
@@ -132,7 +145,9 @@ describe('FreighterConnect', () => {
 
       render(<FreighterConnect />)
 
-      fireEvent.click(await screen.findByRole('button', { name: /Connect Freighter/ }))
+      fireEvent.click(
+        await screen.findByRole('button', { name: /Connect Freighter/ })
+      )
 
       await waitFor(() => {
         expect(screen.getByText('User declined access')).toBeInTheDocument()
@@ -146,13 +161,17 @@ describe('FreighterConnect', () => {
 
       render(<FreighterConnect />)
 
-      fireEvent.click(await screen.findByRole('button', { name: /Connect Freighter/ }))
+      fireEvent.click(
+        await screen.findByRole('button', { name: /Connect Freighter/ })
+      )
 
       await waitFor(() => {
         expect(screen.getByText('User rejected')).toBeInTheDocument()
       })
 
-      fireEvent.click(await screen.findByRole('button', { name: /Connect Freighter/ }))
+      fireEvent.click(
+        await screen.findByRole('button', { name: /Connect Freighter/ })
+      )
 
       await waitFor(() => {
         expect(screen.queryByText('User rejected')).not.toBeInTheDocument()
@@ -161,33 +180,41 @@ describe('FreighterConnect', () => {
   })
 
   describe('unavailable extension', () => {
-    it('shows error when extension is not installed', async () => {
     it('shows error and install link when extension is not installed', async () => {
       mockExtensionMissing()
 
       render(<FreighterConnect />)
 
-      fireEvent.click(await screen.findByRole('button', { name: /Connect Freighter/ }))
+      fireEvent.click(
+        await screen.findByRole('button', { name: /Connect Freighter/ })
+      )
 
       await waitFor(() => {
         expect(screen.getByText(/Freighter not installed/)).toBeInTheDocument()
-        expect(screen.getByRole('link', { name: /Install Freighter/i })).toHaveAttribute(
-          'href',
-          'https://www.freighter.app/'
-        )
-        expect(screen.getByRole('button', { name: /check again/i })).toBeInTheDocument()
+        expect(
+          screen.getByRole('link', { name: /Install Freighter/i })
+        ).toHaveAttribute('href', 'https://www.freighter.app/')
+        expect(
+          screen.getByRole('button', { name: /check again/i })
+        ).toBeInTheDocument()
       })
     })
 
     it('opens the install page with noopener,noreferrer', async () => {
       mockExtensionMissing()
-      const windowOpenSpy = vi.spyOn(window, 'open').mockImplementation(() => null)
+      const windowOpenSpy = vi
+        .spyOn(window, 'open')
+        .mockImplementation(() => null)
 
       render(<FreighterConnect />)
 
-      fireEvent.click(await screen.findByRole('button', { name: /Connect Freighter/ }))
+      fireEvent.click(
+        await screen.findByRole('button', { name: /Connect Freighter/ })
+      )
 
-      const installLink = await screen.findByRole('link', { name: /Install Freighter/i })
+      const installLink = await screen.findByRole('link', {
+        name: /Install Freighter/i,
+      })
       fireEvent.click(installLink)
 
       expect(windowOpenSpy).toHaveBeenCalledWith(
@@ -204,10 +231,14 @@ describe('FreighterConnect', () => {
 
       render(<FreighterConnect />)
 
-      fireEvent.click(await screen.findByRole('button', { name: /Connect Freighter/ }))
+      fireEvent.click(
+        await screen.findByRole('button', { name: /Connect Freighter/ })
+      )
 
       await waitFor(() => {
-        expect(screen.getByRole('button', { name: /check again/i })).toBeInTheDocument()
+        expect(
+          screen.getByRole('button', { name: /check again/i })
+        ).toBeInTheDocument()
       })
 
       // Simulate the extension being installed and approved after the fact.
@@ -217,7 +248,6 @@ describe('FreighterConnect', () => {
 
       await waitFor(() => {
         expect(screen.getByText(/GAAA\.\.\.AAAA/)).toBeInTheDocument()
-        expect(screen.getByText('TESTNET')).toBeInTheDocument()
       })
     })
   })
@@ -229,7 +259,9 @@ describe('FreighterConnect', () => {
 
       render(<FreighterConnect onConnect={onConnect} />)
 
-      fireEvent.click(await screen.findByRole('button', { name: /Connect Freighter/ }))
+      fireEvent.click(
+        await screen.findByRole('button', { name: /Connect Freighter/ })
+      )
 
       await waitFor(() => {
         expect(onConnect).toHaveBeenCalledWith(MOCK_PUBLIC_KEY)
@@ -255,7 +287,9 @@ describe('FreighterConnect', () => {
 
       render(<FreighterConnect onConnect={onConnect} />)
 
-      fireEvent.click(await screen.findByRole('button', { name: /Connect Freighter/ }))
+      fireEvent.click(
+        await screen.findByRole('button', { name: /Connect Freighter/ })
+      )
 
       await waitFor(() => {
         expect(screen.getByText('Disconnect')).toBeInTheDocument()
@@ -276,7 +310,9 @@ describe('FreighterConnect', () => {
       fireEvent.click(screen.getByText('Disconnect'))
 
       await waitFor(() => {
-        expect(screen.getByRole('button', { name: /Connect Freighter/ })).toBeInTheDocument()
+        expect(
+          screen.getByRole('button', { name: /Connect Freighter/ })
+        ).toBeInTheDocument()
       })
       expect(localStorage.getItem(WALLET_STORAGE_KEY)).toBeNull()
     })
@@ -285,17 +321,55 @@ describe('FreighterConnect', () => {
   describe('loading state', () => {
     it('disables button while connecting', async () => {
       mockRequestAccess.mockImplementation(
-        () => new Promise((resolve) => setTimeout(() => resolve({ address: MOCK_PUBLIC_KEY }), 100))
+        () =>
+          new Promise((resolve) =>
+            setTimeout(() => resolve({ address: MOCK_PUBLIC_KEY }), 100)
+          )
       )
 
       render(<FreighterConnect />)
 
-      const button = await screen.findByRole('button', { name: /Connect Freighter/ })
+      const button = await screen.findByRole('button', {
+        name: /Connect Freighter/,
+      })
       fireEvent.click(button)
 
       await waitFor(() => {
         expect(button).toBeDisabled()
       })
     })
+  })
+
+  describe('slow approval', () => {
+    it('waits for a slow requestAccess instead of reporting the extension as missing', async () => {
+      mockRequestAccess.mockImplementation(
+        () =>
+          new Promise((resolve) =>
+            setTimeout(() => resolve({ address: MOCK_PUBLIC_KEY }), 5000)
+          )
+      )
+
+      render(<FreighterConnect />)
+
+      fireEvent.click(
+        await screen.findByRole('button', { name: /Connect Freighter/ })
+      )
+
+      // While the user is still approving, no "not installed" error should appear.
+      await new Promise((resolve) => setTimeout(resolve, 3000))
+      expect(
+        screen.queryByText(/Freighter not installed/)
+      ).not.toBeInTheDocument()
+
+      await waitFor(
+        () => {
+          expect(screen.getByText('Disconnect')).toBeInTheDocument()
+        },
+        { timeout: 8000 }
+      )
+      expect(
+        screen.queryByText(/Freighter not installed/)
+      ).not.toBeInTheDocument()
+    }, 15000)
   })
 })

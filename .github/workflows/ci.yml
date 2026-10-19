@@ -7,6 +7,11 @@ on:
     branches: [main]
 
 jobs:
+  # NOTE: The `ci` job (and its `Lint · Type-check · Build` name) is a required
+  # status check on `main`. Configure it under GitHub → Settings → Branches →
+  # branch protection for `main`: require this check, require branches to be up
+  # to date before merging, and disallow force-pushes. Do not rename this job
+  # without updating the branch protection rule, or merges will be blocked.
   ci:
     name: Lint · Type-check · Build
     runs-on: ubuntu-latest

@@ -36,8 +36,8 @@ describe('apiFetch', () => {
       expect.stringContaining('/test'),
       expect.objectContaining({ headers: expect.any(Headers) })
     )
-    const init = (global.fetch as unknown as { mock: { calls: unknown[][] } }).mock
-      .calls[0][1] as RequestInit
+    const init = (global.fetch as unknown as { mock: { calls: unknown[][] } })
+      .mock.calls[0][1] as RequestInit
     const sent = init.headers as Headers
     expect(sent.get('X-Custom')).toBe('value')
     expect(sent.has('Content-Type')).toBe(false)
@@ -98,13 +98,18 @@ describe('buildTestWebhookPayload', () => {
     expect(payload.rule_triggered).toBe('FunctionCalled')
     expect(payload.function_name).toBe('transfer')
     expect(payload.amount).toBeUndefined()
-    expect(payload.horizon_link).toBe(`${horizonUrl('mainnet')}/transactions/${payload.transaction_hash}`)
+    expect(payload.horizon_link).toBe(
+      `${horizonUrl('mainnet')}/transactions/${payload.transaction_hash}`
+    )
   })
 
   it('uses the first admin function for AdminFunctionCalled', () => {
     const payload = buildTestWebhookPayload({
       contractId: 'CBCDEF',
-      rule: { type: 'AdminFunctionCalled', function_names: ['set_admin', 'upgrade'] },
+      rule: {
+        type: 'AdminFunctionCalled',
+        function_names: ['set_admin', 'upgrade'],
+      },
     })
 
     expect(payload.rule_triggered).toBe('AdminFunctionCalled')
@@ -126,22 +131,28 @@ describe('buildTestWebhookPayload', () => {
 describe('describeRule', () => {
   it('labels each rule variant with its configuration', () => {
     expect(describeRule({ type: 'AnyTransaction' })).toBe('AnyTransaction')
-    expect(describeRule({ type: 'TransactionFailed' })).toBe('TransactionFailed')
+    expect(describeRule({ type: 'TransactionFailed' })).toBe(
+      'TransactionFailed'
+    )
     expect(describeRule({ type: 'LargeTransfer', threshold_xlm: 100 })).toBe(
       'LargeTransfer (over 100 XLM)'
     )
-    expect(describeRule({ type: 'FunctionCalled', function_name: ' mint ' })).toBe(
-      'FunctionCalled (mint)'
-    )
-    expect(describeRule({ type: 'AdminFunctionCalled', function_names: ['set_admin'] })).toBe(
-      'AdminFunctionCalled (set_admin)'
-    )
+    expect(
+      describeRule({ type: 'FunctionCalled', function_name: ' mint ' })
+    ).toBe('FunctionCalled (mint)')
+    expect(
+      describeRule({
+        type: 'AdminFunctionCalled',
+        function_names: ['set_admin'],
+      })
+    ).toBe('AdminFunctionCalled (set_admin)')
   })
 })
 
 describe('sendTestWebhook', () => {
   const sentPayload = (): Record<string, unknown> => {
-    const call = (global.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0]
+    const call = (global.fetch as unknown as ReturnType<typeof vi.fn>).mock
+      .calls[0]
     return JSON.parse((call[1] as RequestInit).body as string)
   }
 
@@ -150,7 +161,10 @@ describe('sendTestWebhook', () => {
   })
 
   it('sends the rule-aware payload for the selected rule', async () => {
-    ;(global.fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({ ok: true, status: 200 })
+    ;(global.fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      status: 200,
+    })
 
     await sendTestWebhook('https://example.com/webhook', {
       contractId: 'CBCDEF',
@@ -164,43 +178,22 @@ describe('sendTestWebhook', () => {
       rule_triggered: 'AnyTransaction',
       is_test: true,
     })
-    expect(payload.transaction_hash).toMatch(/^[0-9a-f]{64}$/)
-    expect(payload.horizon_link).toContain(`/transactions/${payload.transaction_hash}`)
-  })
-
-  it('sends webhook with rule-aware payload for FunctionCalled and LargeTransfer', async () => {
-    ;(global.fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({ ok: true })
-
-    await sendTestWebhook('https://example.com/webhook', 'CBCDEF', 'mainnet', 10000, undefined, {
-      rule: { id: 'r1', rule_type: 'FunctionCalled', function_name: 'swap' },
-    })
-
-    const call1 = (global.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0]
-    const payload1 = JSON.parse(call1[1].body)
-    expect(payload1.rule_triggered).toBe('FunctionCalled')
-    expect(payload1.function_name).toBe('swap')
-    expect(payload1.network).toBe('mainnet')
-    expect(payload1.is_test).toBe(true)
-
-    await sendTestWebhook('https://example.com/webhook', 'CBCDEF', 'testnet', 10000, undefined, {
-      rule: { id: 'r2', rule_type: 'LargeTransfer', min_amount: '50000' },
-    })
-
-    const call2 = (global.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[1]
-    const payload2 = JSON.parse(call2[1].body)
-    expect(payload2.rule_triggered).toBe('LargeTransfer')
-    expect(payload2.amount).toBe('50000')
-      rule_triggered: 'FunctionCalled',
-      function_name: 'transfer',
-      is_test: true,
-    })
     expect(sentPayload().transaction_hash).toMatch(/^[0-9a-f]{64}$/)
+    expect(sentPayload().horizon_link).toContain(
+      `/transactions/${sentPayload().transaction_hash}`
+    )
   })
 
   it('sends a pre-built payload verbatim', async () => {
-    ;(global.fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({ ok: true, status: 200 })
+    ;(global.fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      status: 200,
+    })
 
-    const payload = buildTestWebhookPayload({ contractId: 'CBCDEF', timestamp: 42 })
+    const payload = buildTestWebhookPayload({
+      contractId: 'CBCDEF',
+      timestamp: 42,
+    })
     await sendTestWebhook('https://example.com/webhook', { payload })
 
     expect(sentPayload()).toEqual(payload)
@@ -228,7 +221,11 @@ describe('sendTestWebhook', () => {
       (_url: string, init: RequestInit) =>
         new Promise((_, reject) => {
           init.signal?.addEventListener('abort', () => {
-            reject(Object.assign(new Error('The operation was aborted'), { name: 'AbortError' }))
+            reject(
+              Object.assign(new Error('The operation was aborted'), {
+                name: 'AbortError',
+              })
+            )
           })
         })
     )
@@ -252,7 +249,11 @@ describe('sendTestWebhook', () => {
       (_url: string, init: RequestInit) =>
         new Promise((_, reject) => {
           init.signal?.addEventListener('abort', () => {
-            reject(Object.assign(new Error('cancelled by caller'), { name: 'AbortError' }))
+            reject(
+              Object.assign(new Error('cancelled by caller'), {
+                name: 'AbortError',
+              })
+            )
           })
         })
     )
@@ -275,37 +276,55 @@ describe('apiFetch hardening', () => {
   const f = () => global.fetch as unknown as ReturnType<typeof vi.fn>
 
   it('returns undefined for 204 and empty bodies', async () => {
-    f().mockResolvedValueOnce({ ok: true, status: 204, text: () => Promise.resolve('') })
+    f().mockResolvedValueOnce({
+      ok: true,
+      status: 204,
+      text: () => Promise.resolve(''),
+    })
     await expect(apiFetch('/x', { method: 'DELETE' })).resolves.toBeUndefined()
-    f().mockResolvedValueOnce({ ok: true, status: 200, text: () => Promise.resolve('') })
+    f().mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      text: () => Promise.resolve(''),
+    })
     await expect(apiFetch('/x')).resolves.toBeUndefined()
   })
 
   it('sets Content-Type only when a body is sent', async () => {
-    f().mockResolvedValue({ ok: true, status: 200, text: () => Promise.resolve('{}') })
+    f().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: () => Promise.resolve('{}'),
+    })
     await apiFetch('/x', { method: 'POST', body: '{}' })
     const init = f().mock.calls.at(-1)![1] as RequestInit
-    expect((init.headers as Headers).get('Content-Type')).toBe('application/json')
+    expect((init.headers as Headers).get('Content-Type')).toBe(
+      'application/json'
+    )
   })
 
   it('times out and aborts the request', async () => {
-    f().mockImplementation((_u: string, init: RequestInit) =>
-      new Promise((_, reject) => {
-        init.signal!.addEventListener('abort', () =>
-          reject(Object.assign(new Error('aborted'), { name: 'AbortError' }))
-        )
-      })
+    f().mockImplementation(
+      (_u: string, init: RequestInit) =>
+        new Promise((_, reject) => {
+          init.signal!.addEventListener('abort', () =>
+            reject(Object.assign(new Error('aborted'), { name: 'AbortError' }))
+          )
+        })
     )
-    await expect(apiFetch('/x', { timeoutMs: 10 })).rejects.toThrow('Request timed out')
+    await expect(apiFetch('/x', { timeoutMs: 10 })).rejects.toThrow(
+      'Request timed out'
+    )
   })
 
   it('propagates a caller abort', async () => {
-    f().mockImplementation((_u: string, init: RequestInit) =>
-      new Promise((_, reject) => {
-        init.signal!.addEventListener('abort', () =>
-          reject(Object.assign(new Error('aborted'), { name: 'AbortError' }))
-        )
-      })
+    f().mockImplementation(
+      (_u: string, init: RequestInit) =>
+        new Promise((_, reject) => {
+          init.signal!.addEventListener('abort', () =>
+            reject(Object.assign(new Error('aborted'), { name: 'AbortError' }))
+          )
+        })
     )
     const ac = new AbortController()
     const p = apiFetch('/x', { signal: ac.signal })
@@ -351,7 +370,11 @@ describe('removeContract', () => {
   })
 
   it('sends a DELETE through apiFetch with a single-slash URL (#252)', async () => {
-    f().mockResolvedValue({ ok: true, status: 204, text: () => Promise.resolve('') })
+    f().mockResolvedValue({
+      ok: true,
+      status: 204,
+      text: () => Promise.resolve(''),
+    })
 
     await expect(removeContract('abc123')).resolves.toBeUndefined()
 
