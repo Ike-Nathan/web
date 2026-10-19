@@ -2,11 +2,35 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { useWalletState } from '@/hooks/useWalletState'
+import { NetworkBadge } from '@/components/NetworkBadge'
+import { subscribeWallet } from '@/lib/walletEvents'
+import type { Network } from '@/lib/networks'
 import {
   connectFreighter,
   FreighterUnavailableError,
   openFreighterInstallPage,
 } from '@/lib/freighter'
+
+const WALLET_STORAGE_KEY = 'freighter_public_key'
+
+/**
+ * Maps a raw Freighter network id (e.g. `PUBLIC`, `TESTNET`) to the app's
+ * `Network`. Returns `null` for ids we don't recognise (custom networks).
+ */
+function toAppNetwork(freighterNetwork: string | null | undefined): Network | null {
+  if (!freighterNetwork) return null
+  switch (freighterNetwork.toUpperCase()) {
+    case 'PUBLIC':
+    case 'MAINNET':
+      return 'mainnet'
+    case 'TESTNET':
+      return 'testnet'
+    case 'FUTURENET':
+      return 'futurenet'
+    default:
+      return null
+  }
+}
 
 interface FreighterConnectProps {
   className?: string
@@ -42,12 +66,84 @@ export default function FreighterConnect({
     if (publicKey) onConnectRef.current?.(publicKey)
   }, [publicKey])
 
+  // The single app-level WatchWalletChanges watcher (in useWalletState) keeps
+  // the shared public key current; here we only need to mirror the network id
+  // and surface connection changes to the parent. No per-instance polling.
+  useEffect(() => {
+    let cancelled = false
+
+    const syncNetwork = async () => {
+      if (!window.freighter) return
+      try {
+        const net = window.freighter.getNetwork
+          ? await window.freighter.getNetwork()
+          : null
+        if (!cancelled) setNetwork(net)
+      } catch {
+        // Ignore network read errors
+      }
+    }
+
+    syncNetwork()
+
+    const unsubscribe = subscribeWallet((event) => {
+      if (event.type === 'connected' && event.publicKey) {
+        window.__freighterPublicKey = event.publicKey
+        setMissingExtension(false)
+        syncNetwork()
+      } else if (event.type === 'disconnected') {
+        setNetwork(null)
+      } else if (event.type === 'networkChanged') {
+        setNetwork(event.network ?? null)
+      }
+    })
+
+    return () => {
+      cancelled = true
+      unsubscribe()
+    }
+  }, [])
+
+  // One-off initial read so an already-authorised extension is reflected on
+  // mount without waiting for the next watcher tick.
+  useEffect(() => {
+    let cancelled = false
+    readFreighterConnection()
+      .then((connection) => {
+        if (!cancelled && connection?.publicKey) {
+          setMissingExtension(false)
+        }
+      })
+      .catch(() => {
+        // Connection check failed
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
   async function connect() {
     if (loading) return
     setLoading(true)
     setError(null)
 
     try {
+      if (!window.freighter) {
+        setMissingExtension(true)
+        setError('Freighter not installed - install the extension and reload')
+        return
+      }
+
+      setMissingExtension(false)
+      const session = await connectFreighter()
+      const net = window.freighter?.getNetwork
+        ? await window.freighter.getNetwork()
+        : null
+      publish(session.publicKey)
+      setNetwork(net)
+      window.__freighterPublicKey = session.publicKey
+      localStorage.setItem(WALLET_STORAGE_KEY, session.publicKey)
+      onConnect?.(session.publicKey)
       const session = await connectFreighter()
       publish(session.publicKey)
       setNetwork(session.network ?? null)
@@ -72,6 +168,20 @@ export default function FreighterConnect({
     onDisconnect?.()
   }
 
+  const handleInstallClick = () => {
+    const onFocusBack = () => {
+      window.removeEventListener('focus', onFocusBack)
+      readFreighterConnection()
+        .then((connection) => {
+          if (connection?.publicKey) setMissingExtension(false)
+        })
+        .catch(() => {
+          // Ignore re-check errors
+        })
+    }
+    window.addEventListener('focus', onFocusBack)
+  }
+
   if (!initialized) {
     return (
       <div className={`flex items-center gap-2 ${className}`}>
@@ -88,11 +198,17 @@ export default function FreighterConnect({
           {publicKey.slice(0, 4)}...{publicKey.slice(-4)}
         </span>
         {network && (
-          <span
-            data-testid="wallet-network-pill"
-            className="text-[10px] uppercase font-mono px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 border border-zinc-700"
-          >
-            {network}
+          <span data-testid="wallet-network-pill">
+            {toAppNetwork(network) ? (
+              <NetworkBadge network={toAppNetwork(network)!} />
+            ) : (
+              <span
+                title={network}
+                className="text-[10px] uppercase font-mono px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 border border-zinc-700"
+              >
+                Custom network
+              </span>
+            )}
           </span>
         )}
         <button

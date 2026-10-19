@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from 'react'
 import { subscribeWallet } from '@/lib/walletEvents'
-import { useState, useEffect } from 'react'
 import { readFreighterConnection } from '@/lib/freighter'
 
 export function useFreighterConnection() {
@@ -11,27 +10,21 @@ export function useFreighterConnection() {
   const [network, setNetwork] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
+  // Initial probe for the first render only. Ongoing changes are published by
+  // the app-level WatchWalletChanges watcher (useWalletState/useWalletWatcher)
+  // through the wallet event bus, so no per-instance polling is needed here.
   useEffect(() => {
     let cancelled = false
 
     async function checkConnection() {
       try {
-        if (!window.freighter) {
-          setIsConnected(false)
-          setLoading(false)
-          return
-        }
-        const connected = await window.freighter.isConnected()
-        if (connected) {
-          const key = await window.freighter.getPublicKey()
-          if (cancelled) return
-          setPublicKey(key)
-          setIsConnected(true)
-        } else {
-          setIsConnected(false)
-        }
+        const connection = await readFreighterConnection()
+        if (cancelled) return
+        setPublicKey(connection?.publicKey ?? null)
+        setNetwork(connection?.network ?? null)
+        setIsConnected(Boolean(connection?.publicKey))
       } catch {
-        setIsConnected(false)
+        if (!cancelled) setIsConnected(false)
       } finally {
         if (!cancelled) setLoading(false)
       }
@@ -55,76 +48,6 @@ export function useFreighterConnection() {
       }),
     []
   )
-    let mounted = true
-
-    async function checkConnection() {
-      try {
-        if (!window.freighter) {
-          if (mounted) {
-            setIsConnected(false)
-            setPublicKey(null)
-            setNetwork(null)
-            setLoading(false)
-          }
-          return
-        }
-        const connected = await window.freighter.isConnected()
-        if (connected) {
-          const [key, net] = await Promise.all([
-            window.freighter.getPublicKey(),
-            window.freighter.getNetwork ? window.freighter.getNetwork() : Promise.resolve(null),
-          ])
-          if (mounted) {
-            setPublicKey(key)
-            setNetwork(net)
-            setIsConnected(true)
-          }
-        } else {
-          if (mounted) {
-            setIsConnected(false)
-            setPublicKey(null)
-            setNetwork(null)
-          }
-        }
-      } catch {
-        if (mounted) {
-          setIsConnected(false)
-        }
-      } finally {
-        if (mounted) {
-          setLoading(false)
-        }
-      }
-    }
-
-    checkConnection()
-
-    const onSync = () => {
-      if (!document.hidden) {
-        checkConnection()
-      }
-  async function checkConnection() {
-    try {
-      const connection = await readFreighterConnection()
-      setPublicKey(connection?.publicKey ?? null)
-      setIsConnected(Boolean(connection?.publicKey))
-    } catch {
-      setIsConnected(false)
-    } finally {
-      setLoading(false)
-    }
-
-    const intervalId = setInterval(onSync, 5000)
-    window.addEventListener('focus', onSync)
-    document.addEventListener('visibilitychange', onSync)
-
-    return () => {
-      mounted = false
-      clearInterval(intervalId)
-      window.removeEventListener('focus', onSync)
-      document.removeEventListener('visibilitychange', onSync)
-    }
-  }, [])
 
   return { isConnected, publicKey, network, loading }
 }

@@ -77,4 +77,35 @@ describe('WalletStatusBadge', () => {
     })
     expect(screen.queryByText('Connected')).not.toBeInTheDocument()
   })
+
+  describe('network pill', () => {
+    function mockFreighter(network: string) {
+      ;(window as any).freighter = {
+        isConnected: vi.fn().mockResolvedValue(true),
+        getNetwork: vi.fn().mockResolvedValue(network),
+      }
+    }
+
+    it.each([
+      ['PUBLIC', 'Mainnet'],
+      ['TESTNET', 'Testnet'],
+      ['FUTURENET', 'Futurenet'],
+    ])('renders the friendly label for %s', async (id, label) => {
+      mockFreighter(id)
+
+      render(<WalletStatusBadge />)
+
+      await waitFor(() => expect(screen.getByText(label)).toBeInTheDocument())
+      expect(screen.queryByText(id)).not.toBeInTheDocument()
+    })
+
+    it('renders "Custom network" with the raw id in the tooltip for unknown ids', async () => {
+      mockFreighter('SANDBOX')
+
+      render(<WalletStatusBadge />)
+
+      await waitFor(() => expect(screen.getByText('Custom network')).toBeInTheDocument())
+      expect(screen.getByTitle('SANDBOX')).toBeInTheDocument()
+    })
+  })
 })
