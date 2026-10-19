@@ -12,16 +12,23 @@ export {
 
 export const STELLAR_EXPERT_BASE = 'https://stellar.expert/explorer'
 
-export function explorerTxUrl(network: Network, txHash: string): string {
-  const net = network === 'mainnet' ? 'public' : network
+export function resolveExplorerNetwork(network?: string): string {
+  if (!network) return 'public'
+  const lower = network.toLowerCase()
+  if (lower === 'mainnet') return 'public'
+  return lower
+}
+
+export function explorerTxUrl(network: Network | string, txHash: string): string {
+  const net = resolveExplorerNetwork(network)
   return `${STELLAR_EXPERT_BASE}/${net}/tx/${txHash}`
 }
 
 export function explorerContractUrl(
-  network: Network,
+  network: Network | string,
   contractId: string
 ): string {
-  const net = network === 'mainnet' ? 'public' : network
+  const net = resolveExplorerNetwork(network)
   return `${STELLAR_EXPERT_BASE}/${net}/contract/${contractId}`
 }
 

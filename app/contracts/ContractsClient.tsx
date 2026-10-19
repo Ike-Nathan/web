@@ -1,9 +1,9 @@
 'use client'
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
-import { WatchedContract, Network } from '@/types'
+import { WatchedContract, Network, AlertRuleType, isAlertRuleType } from '@/types'
 import { getContracts, getAlerts } from '@/lib/storage'
 import { 
   refreshContracts, 
@@ -33,6 +33,7 @@ import ContractsSkeleton from '@/components/ContractsSkeleton'
 import { useToast } from '@/components/ToastProvider'
 
 type NetworkFilter = 'all' | Network
+export type StatusFilter = 'all' | 'active' | 'paused'
 
 const PAGE_SIZE = 12
 const HIGHLIGHT_DURATION_MS = 6000
@@ -48,6 +49,20 @@ const NETWORK_FILTERS: { value: NetworkFilter; label: string }[] = [
   { value: 'mainnet', label: 'Mainnet' },
   { value: 'testnet', label: 'Testnet' },
   { value: 'futurenet', label: 'Futurenet' },
+]
+
+export const STATUS_FILTERS: { value: StatusFilter; label: string }[] = [
+  { value: 'all', label: 'All' },
+  { value: 'active', label: 'Active' },
+  { value: 'paused', label: 'Paused' },
+]
+
+export const RULE_TYPE_OPTIONS: { type: AlertRuleType; label: string }[] = [
+  { type: 'LargeTransfer', label: 'Large Transfer' },
+  { type: 'AdminFunctionCalled', label: 'Admin Function' },
+  { type: 'AnyTransaction', label: 'Any Transaction' },
+  { type: 'FunctionCalled', label: 'Function Called' },
+  { type: 'TransactionFailed', label: 'Transaction Failed' },
 ]
 
 const SORT_OPTIONS: { value: SortOption; label: string }[] = [
@@ -69,6 +84,22 @@ export default function ContractsClient() {
   const [contractFilter, setContractFilter] = useState<ContractFilter | null>(() => {
     return parseContractFilter(searchParams?.get('filter'))
   })
+  const [networkFilter, setNetworkFilter] = useState<NetworkFilter>(() => {
+    const net = searchParams?.get('network')
+    return (net === 'mainnet' || net === 'testnet' || net === 'futurenet') ? net : 'all'
+  })
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>(() => {
+    const s = searchParams?.get('status')
+    return (s === 'active' || s === 'paused') ? s : 'all'
+  })
+  const [selectedRuleTypes, setSelectedRuleTypes] = useState<AlertRuleType[]>(() => {
+    const r = searchParams?.get('ruleTypes')
+    if (!r) return []
+    return r.split(',').filter(isAlertRuleType)
+  })
+  const [refreshing, setRefreshing] = useState(false)
+  const [refreshError, setRefreshError] = useState<string | null>(null)
+  const [bannerDismissed, setBannerDismissed] = useState(false)
   const [sortBy, setSortBy] = useState<SortOption>('newest')
   const [search, setSearch] = useState(() => searchParams?.get('q') ?? '')
   const [mounted, setMounted] = useState(false)
@@ -80,17 +111,35 @@ export default function ContractsClient() {
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [confirmOpen, setConfirmOpen] = useState(false)
 
+  const doRefresh = useCallback(async () => {
+    setRefreshing(true)
+    setBannerDismissed(false)
+    try {
+      const res = await refreshContracts()
+      setAllContracts(res.contracts)
+      if (res.error) {
+        setRefreshError(res.error)
+      } else {
+        setRefreshError(null)
+      }
+    } catch (e) {
+      setRefreshError(e instanceof Error ? e.message : 'Network error')
+    } finally {
+      setRefreshing(false)
+    }
+  }, [])
+
   useEffect(() => {
     const all = getContracts()
     setAllContracts(all)
     setMounted(true)
-    refreshContracts().then((r) => setAllContracts(r.contracts))
+    void doRefresh()
     
     setSyncStatuses(getSyncStatuses())
     return onSyncStatusesChange(() => {
       setSyncStatuses(getSyncStatuses())
     })
-  }, [])
+  }, [doRefresh])
 
   useEffect(() => {
     const initial = resolveContractPrefs({
@@ -139,18 +188,54 @@ export default function ContractsClient() {
     }
     return contractFiltered.filter((contract) => contract.network === networkFilter)
   }, [contractFiltered, networkFilter])
+  }, [networkFilter, statusFilter, selectedRuleTypes, search])
+
+  useEffect(() => {
+    if (!mounted) return
+    const params = new URLSearchParams()
+    if (search.trim()) params.set('q', search.trim())
+    if (networkFilter !== 'all') params.set('network', networkFilter)
+    if (statusFilter !== 'all') params.set('status', statusFilter)
+    if (selectedRuleTypes.length > 0) params.set('ruleTypes', selectedRuleTypes.join(','))
+    if (sortBy !== 'newest') params.set('sort', sortBy)
+    if (viewMode !== 'flat') params.set('view', viewMode)
+
+    const qs = params.toString()
+    const newUrl = qs ? `/contracts?${qs}` : '/contracts'
+    if (typeof window !== 'undefined') {
+      window.history.replaceState(null, '', newUrl)
+    }
+  }, [networkFilter, statusFilter, selectedRuleTypes, search, sortBy, viewMode, mounted])
 
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase()
-    if (!query) return networkFiltered
 
-    return networkFiltered.filter((contract) => {
-      return (
-        contract.label.toLowerCase().includes(query) ||
-        contract.contract_id.toLowerCase().includes(query)
-      )
+    return allContracts.filter((contract) => {
+      if (networkFilter !== 'all' && contract.network !== networkFilter) {
+        return false
+      }
+
+      const isPaused = contract.enabled === false
+      if (statusFilter === 'active' && isPaused) return false
+      if (statusFilter === 'paused' && !isPaused) return false
+
+      if (selectedRuleTypes.length > 0) {
+        const hasMatchingRule = contract.rules.some((r) =>
+          selectedRuleTypes.includes(r.type)
+        )
+        if (!hasMatchingRule) return false
+      }
+
+      if (query) {
+        const matches =
+          contract.label.toLowerCase().includes(query) ||
+          contract.contract_id.toLowerCase().includes(query)
+        if (!matches) return false
+      }
+
+      return true
     })
-  }, [networkFiltered, search])
+  }, [allContracts, networkFilter, statusFilter, selectedRuleTypes, search])
 
   const sorted = useMemo(() => sortContracts(filtered, sortBy), [filtered, sortBy])
   const totalPages = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE))
@@ -288,7 +373,15 @@ export default function ContractsClient() {
     <div className="space-y-6">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-zinc-100">Contracts</h1>
+          <div className="flex items-center gap-2">
+            <h1 className="text-2xl font-bold text-zinc-100">Contracts</h1>
+            {refreshing && (
+              <span className="text-xs text-zinc-400 inline-flex items-center gap-1.5 ml-2" aria-live="polite">
+                <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-pulse" />
+                Refreshing…
+              </span>
+            )}
+          </div>
           <p className="text-sm text-zinc-500 mt-1">{filtered.length} registered</p>
         </div>
 
@@ -324,20 +417,27 @@ export default function ContractsClient() {
         </div>
       </div>
 
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap items-center gap-2">
-          {NETWORK_FILTERS.map((filter) => (
+      {refreshError && !bannerDismissed && (
+        <div
+          role="alert"
+          className="flex items-center justify-between gap-3 px-4 py-3 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-200 text-sm"
+        >
+          <div className="flex items-center gap-2">
+            <svg className="w-4 h-4 flex-shrink-0 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
+            <span>
+              Showing cached contracts — couldn&apos;t reach the API ({refreshError})
+            </span>
+          </div>
+          <div className="flex items-center gap-3 flex-shrink-0">
             <button
-              key={filter.value}
               type="button"
-              onClick={() => setNetworkFilter(filter.value)}
-              className={`rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
-                networkFilter === filter.value
-                  ? 'bg-indigo-600 text-white'
-                  : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-200'
-              }`}
+              onClick={() => void doRefresh()}
+              disabled={refreshing}
+              className="px-2.5 py-1 text-xs font-semibold rounded bg-amber-500/20 hover:bg-amber-500/30 text-amber-100 transition-colors disabled:opacity-50"
             >
-              {filter.label}
+              {refreshing ? 'Retrying…' : 'Retry'}
             </button>
           ))}
 
@@ -354,6 +454,57 @@ export default function ContractsClient() {
               </button>
             </span>
           )}
+            <button
+              type="button"
+              onClick={() => setBannerDismissed(true)}
+              aria-label="Dismiss banner"
+              className="text-amber-400 hover:text-amber-200 p-0.5"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+        </div>
+      )}
+
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-3">
+          {/* Network filter */}
+          <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Network filter">
+            {NETWORK_FILTERS.map((filter) => (
+              <button
+                key={filter.value}
+                type="button"
+                onClick={() => setNetworkFilter(filter.value)}
+                className={`rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
+                  networkFilter === filter.value
+                    ? 'bg-indigo-600 text-white'
+                    : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-200'
+                }`}
+              >
+                {filter.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Status filter toggle */}
+          <div className="flex items-center gap-1 p-1 bg-zinc-900 border border-zinc-800 rounded-lg text-xs" role="group" aria-label="Status filter">
+            {STATUS_FILTERS.map((s) => (
+              <button
+                key={s.value}
+                type="button"
+                onClick={() => setStatusFilter(s.value)}
+                className={`px-2.5 py-1 rounded transition-colors ${
+                  statusFilter === s.value
+                    ? 'bg-zinc-800 text-white font-medium'
+                    : 'text-zinc-400 hover:text-zinc-200'
+                }`}
+              >
+                {s.label}
+              </button>
+            ))}
+          </div>
         </div>
 
         <div className="flex items-center gap-2">
@@ -419,6 +570,41 @@ export default function ContractsClient() {
         </div>
       </div>
 
+      {/* Rule types multi-select filter */}
+      <div className="flex flex-wrap items-center gap-2 text-xs" role="group" aria-label="Rule types filter">
+        <span className="text-zinc-500 font-medium">Rules:</span>
+        {RULE_TYPE_OPTIONS.map(({ type, label }) => {
+          const isSelected = selectedRuleTypes.includes(type)
+          return (
+            <button
+              key={type}
+              type="button"
+              onClick={() => {
+                setSelectedRuleTypes((prev) =>
+                  prev.includes(type) ? prev.filter((t) => t !== type) : [...prev, type]
+                )
+              }}
+              className={`px-2.5 py-1 rounded-full border transition-colors ${
+                isSelected
+                  ? 'bg-indigo-600/30 text-indigo-200 border-indigo-500 font-medium'
+                  : 'bg-zinc-800 text-zinc-400 border-zinc-700/60 hover:text-zinc-200 hover:border-zinc-600'
+              }`}
+            >
+              {label}
+            </button>
+          )
+        })}
+        {selectedRuleTypes.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setSelectedRuleTypes([])}
+            className="text-xs text-zinc-500 hover:text-zinc-300 ml-1 underline cursor-pointer"
+          >
+            Clear rules
+          </button>
+        )}
+      </div>
+
       {selectionMode && (
         <div className="flex flex-col gap-3 rounded-lg border border-zinc-800 bg-zinc-900/60 px-4 py-3">
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -479,6 +665,22 @@ export default function ContractsClient() {
         <EmptyState
           title="No matching contracts"
           description="Try adjusting your search or filter."
+          action={
+            (networkFilter !== 'all' || statusFilter !== 'all' || selectedRuleTypes.length > 0 || search) ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setNetworkFilter('all')
+                  setStatusFilter('all')
+                  setSelectedRuleTypes([])
+                  setSearch('')
+                }}
+                className="inline-flex items-center justify-center rounded-lg bg-zinc-800 px-4 py-2 text-sm font-medium text-zinc-100 hover:bg-zinc-700"
+              >
+                Reset filters
+              </button>
+            ) : undefined
+          }
         />
       ) : viewMode === 'grouped' ? (
         <div className="space-y-8">

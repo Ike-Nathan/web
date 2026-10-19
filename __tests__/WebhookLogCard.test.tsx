@@ -1,12 +1,23 @@
 import React from 'react';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { WebhookLogCard, WebhookEntry } from '../components/WebhookLogCard';
+import { AlertPayload } from '../types';
 
 const base: WebhookEntry = {
   id: '1',
   timestamp: '2024-03-15T10:00:00Z',
   event: 'transfer',
   status: 'success',
+};
+
+const baseAlert: AlertPayload = {
+  label: 'Test Contract',
+  contract_id: 'CA3D5KRYM6CB7OWQ6TWYRR3Z4T7GNZLKERYNZGGA5CWK',
+  network: 'testnet',
+  rule_triggered: 'LargeTransfer',
+  transaction_hash: 'abc123def4567890abc123def4567890',
+  timestamp: new Date('2024-03-15T10:00:00Z').getTime(),
+  amount: 250,
 };
 
 describe('WebhookLogCard', () => {
@@ -86,4 +97,31 @@ describe('WebhookLogCard', () => {
     render(<WebhookLogCard entry={base} />);
     expect(screen.queryByRole('link')).not.toBeInTheDocument();
   });
+
+  it('renders correctly from an AlertPayload prop', () => {
+    render(<WebhookLogCard alert={baseAlert} network="testnet" />);
+    expect(screen.getByText('LargeTransfer')).toBeInTheDocument();
+    expect(screen.getByText(/250/)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /View transaction/ })).toHaveAttribute(
+      'href',
+      `https://stellar.expert/explorer/testnet/tx/${baseAlert.transaction_hash}`,
+    );
+  });
+
+  it('calls custom onClick prop when clicked', () => {
+    const onClick = vi.fn();
+    render(<WebhookLogCard alert={baseAlert} onClick={onClick} />);
+    fireEvent.click(screen.getByRole('button', { name: /Webhook event LargeTransfer/i }));
+    expect(onClick).toHaveBeenCalledTimes(1);
+  });
+
+  it('opens Modal detail when clicked without custom onClick', () => {
+    render(<WebhookLogCard alert={baseAlert} />);
+    fireEvent.click(screen.getByRole('button', { name: /Webhook event LargeTransfer/i }));
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(screen.getByText('Alert Detail')).toBeInTheDocument();
+    expect(screen.getByText('Copy JSON')).toBeInTheDocument();
+    expect(screen.getByText('Open in explorer')).toBeInTheDocument();
+  });
 });
+
