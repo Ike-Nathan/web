@@ -4,6 +4,27 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { WatchedContract, Network } from '@/types'
+import { getContracts, getAlerts } from '@/lib/storage'
+import { 
+  refreshContracts, 
+  syncDeleteContract, 
+  syncSaveContract, 
+  getSyncStatuses, 
+  onSyncStatusesChange,
+  type SyncStatus 
+} from '@/lib/contractSync'
+import { 
+  loadContractPrefs, 
+  saveContractPrefs, 
+  resolveContractPrefs, 
+  sortContracts, 
+  SortOption, 
+  ContractViewMode 
+} from '@/lib/contractSort'
+import ContractCard from '@/components/ContractCard'
+import EmptyState from '@/components/EmptyState'
+import ContractsSkeleton from '@/components/ContractsSkeleton'
+import { useToast } from '@/components/ToastProvider'
 import { getContracts, getAlerts, deleteContract } from '@/lib/storage'
 import { refreshContracts, syncSaveContract } from '@/lib/contractSync'
 import ContractCard from '@/components/ContractCard'
@@ -11,14 +32,10 @@ import EmptyState from '@/components/EmptyState'
 import ContractsSkeleton from '@/components/ContractsSkeleton'
 import { networkDotColors } from '@/components/NetworkBadge'
 
-type ViewMode = 'flat' | 'grouped'
 type NetworkFilter = 'all' | Network
-type SortOption = 'newest' | 'oldest' | 'label-asc' | 'label-desc'
 
 const PAGE_SIZE = 12
 const HIGHLIGHT_DURATION_MS = 6000
-
-const PREFS_KEY = 'txwatch_prefs'
 
 const NETWORK_LABELS: Record<Network, string> = {
   mainnet: 'Mainnet',
@@ -40,76 +57,19 @@ const SORT_OPTIONS: { value: SortOption; label: string }[] = [
   { value: 'label-desc', label: 'Label Z–A' },
 ]
 
-const VIEW_MODES: ViewMode[] = ['flat', 'grouped']
-const SORT_VALUES: SortOption[] = ['newest', 'oldest', 'label-asc', 'label-desc']
-
-export function readPrefs(): { viewMode?: ViewMode; sortBy?: SortOption } {
-  try {
-    const raw = localStorage.getItem(PREFS_KEY)
-    if (!raw) return {}
-    const parsed = JSON.parse(raw) as { viewMode?: unknown; sortBy?: unknown }
-    const prefs: { viewMode?: ViewMode; sortBy?: SortOption } = {}
-    if (VIEW_MODES.includes(parsed.viewMode as ViewMode)) {
-      prefs.viewMode = parsed.viewMode as ViewMode
-    }
-    if (SORT_VALUES.includes(parsed.sortBy as SortOption)) {
-      prefs.sortBy = parsed.sortBy as SortOption
-    }
-    return prefs
-  } catch {
-    return {}
-  }
-}
-
-export function writePrefs(prefs: { viewMode?: ViewMode; sortBy?: SortOption }) {
-  try {
-    const existing = readPrefs()
-    localStorage.setItem(PREFS_KEY, JSON.stringify({ ...existing, ...prefs }))
-  } catch {
-    // ignore storage failures (private mode, quota, etc.)
-  }
-}
-
-export function resolveInitialPrefs(params: {
-  viewMode?: string | null
-  sortBy?: string | null
-}): { viewMode: ViewMode; sortBy: SortOption } {
-  const stored = readPrefs()
-  const urlView = params.viewMode
-  const urlSort = params.sortBy
-  return {
-    viewMode: VIEW_MODES.includes(urlView as ViewMode)
-      ? (urlView as ViewMode)
-      : stored.viewMode ?? 'flat',
-    sortBy: SORT_VALUES.includes(urlSort as SortOption)
-      ? (urlSort as SortOption)
-      : stored.sortBy ?? 'newest',
-  }
-}
-
-function sortContracts(contracts: WatchedContract[], sortBy: SortOption) {
-  const sorted = [...contracts]
-  switch (sortBy) {
-    case 'oldest':
-      return sorted.sort((a, b) => a.created_at - b.created_at)
-    case 'label-asc':
-      return sorted.sort((a, b) => a.label.localeCompare(b.label))
-    case 'label-desc':
-      return sorted.sort((a, b) => b.label.localeCompare(a.label))
-    case 'newest':
-    default:
-      return sorted.sort((a, b) => b.created_at - a.created_at)
-  }
-}
+const VIEW_MODES: ContractViewMode[] = ['flat', 'grouped']
 
 export default function ContractsPage() {
   const searchParams = useSearchParams()
+  const { showToast } = useToast()
+  
   const [allContracts, setAllContracts] = useState<WatchedContract[]>([])
+  const [syncStatuses, setSyncStatuses] = useState<Record<string, SyncStatus>>({})
   const [networkFilter, setNetworkFilter] = useState<NetworkFilter>('all')
   const [sortBy, setSortBy] = useState<SortOption>('newest')
   const [search, setSearch] = useState(() => searchParams?.get('q') ?? '')
   const [mounted, setMounted] = useState(false)
-  const [viewMode, setViewMode] = useState<ViewMode>('flat')
+  const [viewMode, setViewMode] = useState<ContractViewMode>('flat')
   const [page, setPage] = useState(1)
   const [highlightedId, setHighlightedId] = useState<string | null>(null)
   const highlightTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -122,12 +82,17 @@ export default function ContractsPage() {
     setAllContracts(all)
     setMounted(true)
     refreshContracts().then((r) => setAllContracts(r.contracts))
+    
+    setSyncStatuses(getSyncStatuses())
+    return onSyncStatusesChange(() => {
+      setSyncStatuses(getSyncStatuses())
+    })
   }, [])
 
   useEffect(() => {
-    const initial = resolveInitialPrefs({
-      viewMode: searchParams?.get('view'),
-      sortBy: searchParams?.get('sort'),
+    const initial = resolveContractPrefs({
+      view: searchParams?.get('view'),
+      sort: searchParams?.get('sort'),
     })
     setViewMode(initial.viewMode)
     setSortBy(initial.sortBy)
@@ -260,13 +225,45 @@ export default function ContractsPage() {
     }
   }
 
-  const handleDeleteSelected = () => {
-    for (const id of selectedIds) {
-      deleteContract(id)
-    }
-    setAllContracts((prev) => prev.filter((contract) => !selectedIds.includes(contract.id)))
-    setSelectedIds([])
+  const handleDeleteSelected = async () => {
     setConfirmOpen(false)
+    setSelectionMode(false)
+
+    const idsToDelete = [...selectedIds]
+    setSelectedIds([])
+
+    // Optimistic local UI removal
+    setAllContracts((prev) => prev.filter((contract) => !idsToDelete.includes(contract.id)))
+
+    const results = await Promise.allSettled(
+      idsToDelete.map(id => syncDeleteContract(id))
+    )
+
+    let failCount = 0
+    results.forEach((res) => {
+      if (res.status === 'rejected' || (res.status === 'fulfilled' && !res.value.ok)) {
+        failCount++
+      }
+    })
+
+    if (failCount > 0) {
+      showToast(`${failCount} of ${idsToDelete.length} could not be deleted on the server`, 'error')
+      // Restore failed deletions from truth
+      refreshContracts().then((r) => setAllContracts(r.contracts))
+    } else {
+      showToast(`Deleted ${idsToDelete.length} contract(s)`, 'success')
+    }
+  }
+
+  const handlePauseSelected = () => {
+    for (const id of selectedIds) {
+      const contract = allContracts.find(c => c.id === id)
+      if (contract) {
+        syncSaveContract({ ...contract, enabled: false }, false)
+      }
+    }
+    setAllContracts((prev) => prev.map((c) => selectedIds.includes(c.id) ? { ...c, enabled: false } : c))
+    setSelectedIds([])
     setSelectionMode(false)
   }
 
@@ -379,7 +376,7 @@ export default function ContractsPage() {
                 onChange={(e) => {
                   const next = e.target.value as SortOption
                   setSortBy(next)
-                  writePrefs({ sortBy: next })
+                  saveContractPrefs({ viewMode, sortBy: next })
                 }}
                 className="appearance-none px-3 py-2 pr-8 rounded-lg bg-zinc-800 border border-zinc-700 text-sm font-medium text-zinc-200 hover:bg-zinc-700 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 cursor-pointer"
               >
@@ -406,7 +403,7 @@ export default function ContractsPage() {
                   type="button"
                   onClick={() => {
                     setViewMode(mode)
-                    writePrefs({ viewMode: mode })
+                    saveContractPrefs({ viewMode: mode, sortBy })
                   }}
                   aria-pressed={isActive}
                   className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
@@ -522,6 +519,8 @@ export default function ContractsPage() {
                       highlight={contract.id === highlightedId}
                       selectable={selectionMode}
                       selected={selectedIds.includes(contract.id)}
+                      onToggleSelected={toggleSelected}
+                      syncStatus={syncStatuses[contract.id]}
                       onToggleSelect={toggleSelected}
                     />
                   ))}
@@ -530,6 +529,26 @@ export default function ContractsPage() {
             )
           })}
         </div>
+      ) : (
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {paginated.map((contract) => (
+            <ContractCard
+              key={contract.id}
+              contract={contract}
+              highlighted={contract.id === highlightedId}
+              selectionMode={selectionMode}
+              selected={selectedIds.includes(contract.id)}
+              onToggleSelected={toggleSelected}
+              syncStatus={syncStatuses[contract.id]}
+            />
+          ))}
+        </div>
+      )}
+
+      {viewMode === 'flat' && totalPages > 1 && (
+        <div className="flex items-center justify-center gap-2 mt-6">
+          <button
+            type="button"
       )}
 
       {totalPages > 1 && (
@@ -558,9 +577,6 @@ export default function ContractsPage() {
           </span>
           <button
             type="button"
-            onClick={() => setPage((prev) => Math.min(totalPages, prev + 1))}
-            disabled={page === totalPages}
-            className="rounded-lg bg-zinc-800 px-3 py-2 text-sm text-zinc-100 hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-50"
             onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
             disabled={page === totalPages}
             className="px-3 py-1.5 rounded-lg bg-zinc-800 text-sm text-zinc-200 hover:bg-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed"

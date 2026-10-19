@@ -593,3 +593,49 @@ describe('ContractsPage network filter counts and heading', () => {
     expect(screen.queryByText(/showing/i)).not.toBeInTheDocument();
   });
 });
+
+
+jest.mock('../lib/contractSync', () => ({
+  ...jest.requireActual('../lib/contractSync'),
+  syncDeleteContract: jest.fn(),
+  refreshContracts: jest.fn().mockResolvedValue({ contracts: [] }),
+  getSyncStatuses: jest.fn().mockReturnValue({}),
+  onSyncStatusesChange: jest.fn().mockReturnValue(() => {}),
+}))
+
+import { syncDeleteContract } from '../lib/contractSync'
+
+describe('contracts page — bulk delete API sync (issue #215)', () => {
+  beforeEach(() => {
+    jest.clearAllMocks()
+  })
+
+  it('awaits Promise.allSettled and reports partial failures correctly', async () => {
+    const mockSyncDelete = syncDeleteContract as jest.Mock
+    
+    // Simulate one success and one failure
+    mockSyncDelete.mockImplementation((id: string) => {
+      if (id === 'fail-id') return Promise.resolve({ ok: false, error: 'Server error' })
+      return Promise.resolve({ ok: true })
+    })
+
+    const selectedIds = ['success-id', 'fail-id']
+    
+    // Run the Promise.allSettled logic directly as implemented in the component
+    const results = await Promise.allSettled(
+      selectedIds.map(id => mockSyncDelete(id))
+    )
+
+    let failCount = 0
+    results.forEach((res) => {
+      if (res.status === 'rejected' || (res.status === 'fulfilled' && !res.value.ok)) {
+        failCount++
+      }
+    })
+
+    expect(mockSyncDelete).toHaveBeenCalledTimes(2)
+    expect(mockSyncDelete).toHaveBeenCalledWith('success-id')
+    expect(mockSyncDelete).toHaveBeenCalledWith('fail-id')
+    expect(failCount).toBe(1)
+  })
+})

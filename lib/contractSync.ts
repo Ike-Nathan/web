@@ -22,6 +22,12 @@ export interface SyncStatus {
   at: number
 }
 
+/** Storage key used by the local contract cache; storage events on it signal cross-tab changes. */
+export const CONTRACTS_STORAGE_KEY = CONTRACTS_KEY
+
+/** Custom event to notify same-tab listeners when the sync status dictionary changes. */
+const SYNC_STATUS_EVENT = 'txwatch:sync_status'
+
 /**
  * Re-exported from the storage layer so callers get a subscription that fires
  * for both same-tab and cross-tab contract cache writes.
@@ -44,8 +50,29 @@ function setStatus(id: string, status: SyncStatus | null) {
     if (status) all[id] = status
     else delete all[id]
     localStorage.setItem(SYNC_STATUS_KEY, JSON.stringify(all))
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent(SYNC_STATUS_EVENT))
+    }
   } catch {
     // status is best-effort
+  }
+}
+
+/** Subscribe to both same-tab and cross-tab sync status updates. */
+export function onSyncStatusesChange(callback: () => void): () => void {
+  if (typeof window === 'undefined') return () => {}
+
+  const handleStorage = (e: StorageEvent) => {
+    if (e.key === SYNC_STATUS_KEY) callback()
+  }
+  const handleLocal = () => callback()
+
+  window.addEventListener('storage', handleStorage)
+  window.addEventListener(SYNC_STATUS_EVENT, handleLocal)
+
+  return () => {
+    window.removeEventListener('storage', handleStorage)
+    window.removeEventListener(SYNC_STATUS_EVENT, handleLocal)
   }
 }
 
@@ -56,6 +83,7 @@ export interface SyncResult {
   error?: string
 }
 
+export function syncSaveContract(contract: WatchedContract, isNew: boolean): { saved: boolean, syncPromise: Promise<SyncResult> } {
 /** Save locally (cache) and push to the API when configured. Never throws. */
 export async function syncSaveContract(
   contract: WatchedContract,
@@ -68,6 +96,14 @@ export function syncSaveContract(contract: WatchedContract, isNew: boolean): { s
   try {
     saved = saveContract(contract)
   } catch (err) {
+    return { saved: false, syncPromise: Promise.resolve({ ok: false, error: errMsg(err) }) }
+  }
+
+  if (!saved) {
+    return { saved: false, syncPromise: Promise.resolve({ ok: false, error: 'Storage full or unavailable' }) }
+  }
+
+  const syncPromise = (async () => {
     return { saved: false, sync: Promise.resolve({ ok: false, error: errMsg(err) }) }
   }
 
@@ -88,6 +124,7 @@ export function syncSaveContract(contract: WatchedContract, isNew: boolean): { s
     }
   })()
 
+  return { saved, syncPromise }
   return { saved, sync }
 }
 
