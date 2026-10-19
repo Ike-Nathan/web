@@ -1,11 +1,11 @@
 import Link from 'next/link'
 import { useEffect, useRef } from 'react'
-import { WatchedContract } from '@/types'
+import { WatchedContract, isRuleEnabled } from '@/types'
 import NetworkBadge from './NetworkBadge'
-import { getSyncStatuses } from '@/lib/contractSync'
 import { truncateId } from '@/lib/stellar'
 import { formatDate, formatRelativeTime } from '@/lib/format'
 import { useNow } from '@/lib/useNow'
+import type { SyncStatus } from '@/lib/contractSync'
 
 interface ContractCardProps {
   contract: WatchedContract
@@ -14,6 +14,7 @@ interface ContractCardProps {
   selectable?: boolean
   selected?: boolean
   onToggleSelect?: (id: string) => void
+  syncStatus?: SyncStatus
 }
 
 export default function ContractCard({
@@ -23,11 +24,15 @@ export default function ContractCard({
   selectable,
   selected,
   onToggleSelect,
+  syncStatus,
 }: ContractCardProps) {
   const hasWebhook = Boolean(contract.webhook_url)
-  const sync = getSyncStatuses()[contract.id]
   const ref = useRef<HTMLAnchorElement>(null)
+  
   const paused = contract.enabled === false
+  const activeRulesCount = contract.rules.filter(isRuleEnabled).length
+  const totalRules = contract.rules.length
+  
   const now = useNow(60_000)
 
   useEffect(() => {
@@ -72,9 +77,9 @@ export default function ContractCard({
           )}
           <NetworkBadge network={contract.network} />
         </div>
-        {sync && (
-          <span className={sync.state === 'error' ? 'text-xs text-red-400' : 'text-xs text-emerald-400'} title={sync.error}>
-            {sync.state === 'error' ? 'Sync failed' : 'Synced'}
+        {syncStatus && (
+          <span className={syncStatus.state === 'error' ? 'text-xs text-red-400' : 'text-xs text-emerald-400'} title={syncStatus.error}>
+            {syncStatus.state === 'error' ? 'Sync failed' : 'Synced'}
           </span>
         )}
       </div>
@@ -91,8 +96,13 @@ export default function ContractCard({
 
       <div className="flex items-center justify-between text-xs text-zinc-500">
         <span>
-          <span className="text-zinc-300 font-medium">{contract.rules.length}</span>{' '}
-          {contract.rules.length === 1 ? 'rule' : 'rules'} active
+          {paused ? (
+            <span className="text-zinc-400">Monitoring paused</span>
+          ) : activeRulesCount !== totalRules ? (
+            <span><span className="text-zinc-300 font-medium">{activeRulesCount}</span> of {totalRules} rules on</span>
+          ) : (
+            <span><span className="text-zinc-300 font-medium">{totalRules}</span> {totalRules === 1 ? 'rule' : 'rules'} active</span>
+          )}
         </span>
         {lastAlertTime ? (
           <span>
@@ -131,7 +141,7 @@ export default function ContractCard({
   }
 
   return (
-    <Link href={`/contracts/${contract.id}`} className={cardClassName}>
+    <Link href={`/contracts/${contract.id}`} className={cardClassName} ref={ref}>
       {body}
     </Link>
   )

@@ -1,5 +1,5 @@
 import { vi } from 'vitest'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent } from '@testing-library/react'
 import NewContractPage from '@/app/contracts/new/page'
 import { addContract } from '@/lib/storage'
 

@@ -1,24 +1,50 @@
+import { Suspense } from 'react'
+import ContractsClient from './ContractsClient'
+import ContractsSkeleton from '@/components/ContractsSkeleton'
+
+export default function ContractsPage() {
+  return (
+    <Suspense fallback={<ContractsSkeleton />}>
+      <ContractsClient />
+    </Suspense>
 'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { WatchedContract, Network } from '@/types'
-import { getContracts, getAlerts, deleteContract } from '@/lib/storage'
-import { refreshContracts } from '@/lib/contractSync'
+import { getContracts, getAlerts } from '@/lib/storage'
+import { 
+  refreshContracts, 
+  syncDeleteContract, 
+  syncSaveContract, 
+  getSyncStatuses, 
+  onSyncStatusesChange,
+  type SyncStatus 
+} from '@/lib/contractSync'
+import { 
+  loadContractPrefs, 
+  saveContractPrefs, 
+  resolveContractPrefs, 
+  sortContracts, 
+  SortOption, 
+  ContractViewMode 
+} from '@/lib/contractSort'
 import ContractCard from '@/components/ContractCard'
 import EmptyState from '@/components/EmptyState'
 import ContractsSkeleton from '@/components/ContractsSkeleton'
-import { NETWORK_COLORS } from '@/components/NetworkBadge'
+import { useToast } from '@/components/ToastProvider'
+import { getContracts, getAlerts, deleteContract } from '@/lib/storage'
+import { refreshContracts, syncSaveContract } from '@/lib/contractSync'
+import ContractCard from '@/components/ContractCard'
+import EmptyState from '@/components/EmptyState'
+import ContractsSkeleton from '@/components/ContractsSkeleton'
+import { networkDotColors } from '@/components/NetworkBadge'
 
-type ViewMode = 'flat' | 'grouped'
 type NetworkFilter = 'all' | Network
-type SortOption = 'newest' | 'oldest' | 'label-asc' | 'label-desc'
 
 const PAGE_SIZE = 12
 const HIGHLIGHT_DURATION_MS = 6000
-
-const PREFS_KEY = 'txwatch_prefs'
 
 const NETWORK_LABELS: Record<Network, string> = {
   mainnet: 'Mainnet',
@@ -40,76 +66,19 @@ const SORT_OPTIONS: { value: SortOption; label: string }[] = [
   { value: 'label-desc', label: 'Label Z–A' },
 ]
 
-const VIEW_MODES: ViewMode[] = ['flat', 'grouped']
-const SORT_VALUES: SortOption[] = ['newest', 'oldest', 'label-asc', 'label-desc']
-
-export function readPrefs(): { viewMode?: ViewMode; sortBy?: SortOption } {
-  try {
-    const raw = localStorage.getItem(PREFS_KEY)
-    if (!raw) return {}
-    const parsed = JSON.parse(raw) as { viewMode?: unknown; sortBy?: unknown }
-    const prefs: { viewMode?: ViewMode; sortBy?: SortOption } = {}
-    if (VIEW_MODES.includes(parsed.viewMode as ViewMode)) {
-      prefs.viewMode = parsed.viewMode as ViewMode
-    }
-    if (SORT_VALUES.includes(parsed.sortBy as SortOption)) {
-      prefs.sortBy = parsed.sortBy as SortOption
-    }
-    return prefs
-  } catch {
-    return {}
-  }
-}
-
-export function writePrefs(prefs: { viewMode?: ViewMode; sortBy?: SortOption }) {
-  try {
-    const existing = readPrefs()
-    localStorage.setItem(PREFS_KEY, JSON.stringify({ ...existing, ...prefs }))
-  } catch {
-    // ignore storage failures (private mode, quota, etc.)
-  }
-}
-
-export function resolveInitialPrefs(params: {
-  viewMode?: string | null
-  sortBy?: string | null
-}): { viewMode: ViewMode; sortBy: SortOption } {
-  const stored = readPrefs()
-  const urlView = params.viewMode
-  const urlSort = params.sortBy
-  return {
-    viewMode: VIEW_MODES.includes(urlView as ViewMode)
-      ? (urlView as ViewMode)
-      : stored.viewMode ?? 'flat',
-    sortBy: SORT_VALUES.includes(urlSort as SortOption)
-      ? (urlSort as SortOption)
-      : stored.sortBy ?? 'newest',
-  }
-}
-
-function sortContracts(contracts: WatchedContract[], sortBy: SortOption) {
-  const sorted = [...contracts]
-  switch (sortBy) {
-    case 'oldest':
-      return sorted.sort((a, b) => a.created_at - b.created_at)
-    case 'label-asc':
-      return sorted.sort((a, b) => a.label.localeCompare(b.label))
-    case 'label-desc':
-      return sorted.sort((a, b) => b.label.localeCompare(a.label))
-    case 'newest':
-    default:
-      return sorted.sort((a, b) => b.created_at - a.created_at)
-  }
-}
+const VIEW_MODES: ContractViewMode[] = ['flat', 'grouped']
 
 export default function ContractsPage() {
   const searchParams = useSearchParams()
+  const { showToast } = useToast()
+  
   const [allContracts, setAllContracts] = useState<WatchedContract[]>([])
+  const [syncStatuses, setSyncStatuses] = useState<Record<string, SyncStatus>>({})
   const [networkFilter, setNetworkFilter] = useState<NetworkFilter>('all')
   const [sortBy, setSortBy] = useState<SortOption>('newest')
   const [search, setSearch] = useState(() => searchParams?.get('q') ?? '')
   const [mounted, setMounted] = useState(false)
-  const [viewMode, setViewMode] = useState<ViewMode>('flat')
+  const [viewMode, setViewMode] = useState<ContractViewMode>('flat')
   const [page, setPage] = useState(1)
   const [highlightedId, setHighlightedId] = useState<string | null>(null)
   const highlightTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -121,23 +90,23 @@ export default function ContractsPage() {
     const all = getContracts()
     setAllContracts(all)
     setMounted(true)
-    // With NEXT_PUBLIC_API_URL set, the API is the source of truth.
     refreshContracts().then((r) => setAllContracts(r.contracts))
+    
+    setSyncStatuses(getSyncStatuses())
+    return onSyncStatusesChange(() => {
+      setSyncStatuses(getSyncStatuses())
+    })
   }, [])
 
-  // Check for a recently-created contract id in sessionStorage and highlight it once.
-  // The page owns the single highlight timer; ContractCard no longer runs its own.
-  // Restore persisted view/sort preferences. URL params take precedence over stored prefs.
   useEffect(() => {
-    const initial = resolveInitialPrefs({
-      viewMode: searchParams?.get('view'),
-      sortBy: searchParams?.get('sort'),
+    const initial = resolveContractPrefs({
+      view: searchParams?.get('view'),
+      sort: searchParams?.get('sort'),
     })
     setViewMode(initial.viewMode)
     setSortBy(initial.sortBy)
   }, [searchParams])
 
-  // Check for a recently-created contract id in sessionStorage and highlight it once
   useEffect(() => {
     try {
       const id = sessionStorage.getItem('txwatch_last_created_contract')
@@ -151,7 +120,7 @@ export default function ContractsPage() {
         }, HIGHLIGHT_DURATION_MS)
       }
     } catch {
-      // ignore (server-side or storage issues)
+      // ignore
     }
     return () => {
       if (highlightTimer.current) {
@@ -197,7 +166,6 @@ export default function ContractsPage() {
     }
   }, [page, totalPages])
 
-  // Jump to the page that contains the newly created contract so it can be seen.
   useEffect(() => {
     if (!highlightedId) return
     const index = sorted.findIndex((contract) => contract.id === highlightedId)
@@ -206,7 +174,6 @@ export default function ContractsPage() {
     setPage((current) => (current === targetPage ? current : targetPage))
   }, [highlightedId, sorted])
 
-  // Scroll the highlighted card into view once it is rendered on the active page.
   useEffect(() => {
     if (!highlightedId) return
     const el = document.getElementById(`contract-${highlightedId}`)
@@ -267,13 +234,57 @@ export default function ContractsPage() {
     }
   }
 
-  const handleDeleteSelected = () => {
-    for (const id of selectedIds) {
-      deleteContract(id)
-    }
-    setAllContracts((prev) => prev.filter((contract) => !selectedIds.includes(contract.id)))
-    setSelectedIds([])
+  const handleDeleteSelected = async () => {
     setConfirmOpen(false)
+    setSelectionMode(false)
+
+    const idsToDelete = [...selectedIds]
+    setSelectedIds([])
+
+    // Optimistic local UI removal
+    setAllContracts((prev) => prev.filter((contract) => !idsToDelete.includes(contract.id)))
+
+    const results = await Promise.allSettled(
+      idsToDelete.map(id => syncDeleteContract(id))
+    )
+
+    let failCount = 0
+    results.forEach((res) => {
+      if (res.status === 'rejected' || (res.status === 'fulfilled' && !res.value.ok)) {
+        failCount++
+      }
+    })
+
+    if (failCount > 0) {
+      showToast(`${failCount} of ${idsToDelete.length} could not be deleted on the server`, 'error')
+      // Restore failed deletions from truth
+      refreshContracts().then((r) => setAllContracts(r.contracts))
+    } else {
+      showToast(`Deleted ${idsToDelete.length} contract(s)`, 'success')
+    }
+  }
+
+  const handlePauseSelected = () => {
+    for (const id of selectedIds) {
+      const contract = allContracts.find(c => c.id === id)
+      if (contract) {
+        syncSaveContract({ ...contract, enabled: false }, false)
+      }
+    }
+    setAllContracts((prev) => prev.map((c) => selectedIds.includes(c.id) ? { ...c, enabled: false } : c))
+    setSelectedIds([])
+    setSelectionMode(false)
+  }
+
+  const handlePauseSelected = () => {
+    for (const id of selectedIds) {
+      const contract = allContracts.find(c => c.id === id)
+      if (contract) {
+        syncSaveContract({ ...contract, enabled: false }, false)
+      }
+    }
+    setAllContracts((prev) => prev.map((c) => selectedIds.includes(c.id) ? { ...c, enabled: false } : c))
+    setSelectedIds([])
     setSelectionMode(false)
   }
 
@@ -340,14 +351,18 @@ export default function ContractsPage() {
           ))}
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <label htmlFor="contract-sort" className="sr-only">
             Sort contracts
           </label>
           <select
             id="contract-sort"
             value={sortBy}
-            onChange={(event) => setSortBy(event.target.value as SortOption)}
+            onChange={(event) => {
+              const next = event.target.value as SortOption
+              setSortBy(next)
+              writePrefs({ sortBy: next })
+            }}
             className="rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 focus:border-indigo-500 focus:outline-none"
           >
             {SORT_OPTIONS.map((option) => (
@@ -357,38 +372,22 @@ export default function ContractsPage() {
             ))}
           </select>
 
-          <button
-            type="button"
-            onClick={() => setViewMode((prev) => (prev === 'flat' ? 'grouped' : 'flat'))}
-            className="rounded-lg bg-zinc-800 px-3 py-2 text-sm font-medium text-zinc-100 hover:bg-zinc-700"
+          <div
+            className="flex items-center gap-1 rounded-lg border border-zinc-800 bg-zinc-900 p-1"
+            role="group"
+            aria-label="View mode"
           >
-            {viewMode === 'flat' ? 'Group by network' : 'Flat view'}
-          </button>
-
-          <button
-            type="button"
-            onClick={toggleSelectionMode}
-            className={`rounded-lg px-3 py-2 text-sm font-medium ${
-              selectionMode
-                ? 'bg-indigo-600 text-white hover:bg-indigo-500'
-                : 'bg-zinc-800 text-zinc-100 hover:bg-zinc-700'
-            }`}
-          >
-            {selectionMode ? 'Cancel' : 'Select'}
-          </button>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
           {hasAnyContracts && (
             <div className="relative">
               <select
                 value={sortBy}
-                onChange={(e) => setSortBy(e.target.value as SortOption)}
-                className="appearance-none px-3 py-2 pr-8 rounded-lg bg-zinc-800 border border-zinc-700 text-sm font-medium text-zinc-200 hover:bg-zinc-750 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-colors cursor-pointer"
                 onChange={(e) => {
                   const next = e.target.value as SortOption
                   setSortBy(next)
-                  writePrefs({ sortBy: next })
+                  saveContractPrefs({ viewMode, sortBy: next })
                 }}
-                className="appearance-none px-3 py-2 pr-8 rounded-lg bg-zinc-800 border border-zinc-700 text-sm font-medium text-zinc-200 hover:bg-zinc-700 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                className="appearance-none px-3 py-2 pr-8 rounded-lg bg-zinc-800 border border-zinc-700 text-sm font-medium text-zinc-200 hover:bg-zinc-700 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 cursor-pointer"
               >
                 {SORT_OPTIONS.map(({ value, label }) => (
                   <option key={value} value={value}>
@@ -404,45 +403,19 @@ export default function ContractsPage() {
             </div>
           )}
 
-          <div className="flex items-center gap-1 p-1 bg-zinc-900 border border-zinc-800 rounded-lg" role="group" aria-label="View mode">
-            <button
-              onClick={() => setViewMode('flat')}
-              aria-pressed={viewMode === 'flat'}
-              className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
-                viewMode === 'flat'
-                  ? 'bg-indigo-600 text-white'
-                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800'
-              }`}
-            >
-              Flat
-            </button>
-            <button
-              onClick={() => setViewMode('grouped')}
-              aria-pressed={viewMode === 'grouped'}
-              className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
-                viewMode === 'grouped'
-                  ? 'bg-indigo-600 text-white'
-                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800'
-              }`}
-            >
-              Grouped
-            </button>
-          </div>
-            </div>
-          )}
-
           <div className="flex items-center gap-1 p-1 bg-zinc-900 border border-zinc-800 rounded-lg w-fit" role="group" aria-label="View mode">
             {VIEW_MODES.map((mode) => {
               const isActive = viewMode === mode
               return (
                 <button
                   key={mode}
+                  type="button"
                   onClick={() => {
                     setViewMode(mode)
-                    writePrefs({ viewMode: mode })
+                    saveContractPrefs({ viewMode: mode, sortBy })
                   }}
                   aria-pressed={isActive}
-                  className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                  className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
                     isActive
                       ? 'bg-indigo-600 text-white'
                       : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800'
@@ -453,6 +426,19 @@ export default function ContractsPage() {
               )
             })}
           </div>
+
+          <button
+            type="button"
+            onClick={toggleSelectionMode}
+            className={`rounded-lg px-3 py-2 text-sm font-medium ${
+            className={`rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+              selectionMode
+                ? 'bg-indigo-600 text-white hover:bg-indigo-500'
+                : 'bg-zinc-800 text-zinc-100 hover:bg-zinc-700'
+            }`}
+          >
+            {selectionMode ? 'Cancel' : 'Select'}
+          </button>
         </div>
       </div>
 
@@ -468,14 +454,24 @@ export default function ContractsPage() {
             </button>
             <span className="text-sm text-zinc-400">{selectedIds.length} selected</span>
           </div>
-          <button
-            type="button"
-            onClick={() => setConfirmOpen(true)}
-            disabled={selectedIds.length === 0}
-            className="rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-500 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            Delete selected
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handlePauseSelected}
+              disabled={selectedIds.length === 0}
+              className="rounded-lg bg-zinc-800 px-4 py-2 text-sm font-medium text-zinc-100 hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Pause selected
+            </button>
+            <button
+              type="button"
+              onClick={() => setConfirmOpen(true)}
+              disabled={selectedIds.length === 0}
+              className="rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-500 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Delete selected
+            </button>
+          </div>
         </div>
       )}
 
@@ -498,65 +494,20 @@ export default function ContractsPage() {
           description="Try adjusting your search or filters."
         />
       ) : viewMode === 'flat' ? (
-        <>
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {paginated.map((contract) => (
-              <ContractCard
-                key={contract.id}
-                contract={contract}
-                highlighted={contract.id === highlightedId}
-              />
-            ))}
-          </div>
-
-          {totalPages > 1 && (
-            <div className="flex items-center justify-center gap-2">
-              <button
-                onClick={() => setPage((p) => Math.max(1, p - 1))}
-                disabled={page === 1}
-                className="px-3 py-1.5 rounded-lg bg-zinc-800 text-sm font-medium text-zinc-200 hover:bg-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                Previous
-              </button>
-              <span className="text-sm text-zinc-500">
-                Page {page} of {totalPages}
-              </span>
-              <button
-                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                disabled={page === totalPages}
-                className="px-3 py-1.5 rounded-lg bg-zinc-800 text-sm font-medium text-zinc-200 hover:bg-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                Next
-              </button>
-            </div>
-          )}
-        </>
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {paginated.map((contract) => (
+            <ContractCard
+              key={contract.id}
+              contract={contract}
+              highlight={contract.id === highlightedId}
+              selectable={selectionMode}
+              selected={selectedIds.includes(contract.id)}
+              onToggleSelect={toggleSelected}
+            />
+          ))}
+        </div>
       ) : (
-        <div className="space-y-8">
-          {(Object.keys(grouped) as Network[]).map((network) => {
-            const contracts = grouped[network]
-            if (contracts.length === 0) return null
-            return (
-              <div key={network} className="space-y-4">
-                <h2 className="text-lg font-semibold text-zinc-200">
-                  {NETWORK_LABELS[network]}
-                  <span className="ml-2 text-sm font-normal text-zinc-500">
-                    {contracts.length}
-                  </span>
-                </h2>
-                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                  {contracts.map((contract) => (
-                    <ContractCard
-                      key={contract.id}
-                      contract={contract}
-                      highlighted={contract.id === highlightedId}
-                    />
-                  ))}
-                </div>
-              </div>
-            )
-          })}
-          description="Try adjusting your search or network filter."
+          description="Try adjusting your search or filter."
         />
       ) : viewMode === 'grouped' ? (
         <div className="space-y-8">
@@ -564,9 +515,6 @@ export default function ContractsPage() {
             const contracts = grouped[network]
             if (contracts.length === 0) return null
             return (
-              <div key={network} className="space-y-3">
-                <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">
-                  {NETWORK_LABELS[network]}
               <section key={network} className="space-y-3">
                 <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-400">
                   {NETWORK_LABELS[network]}
@@ -577,14 +525,16 @@ export default function ContractsPage() {
                     <ContractCard
                       key={contract.id}
                       contract={contract}
-                      highlighted={contract.id === highlightedId}
-                      selectionMode={selectionMode}
+                      highlight={contract.id === highlightedId}
+                      selectable={selectionMode}
                       selected={selectedIds.includes(contract.id)}
                       onToggleSelected={toggleSelected}
+                      syncStatus={syncStatuses[contract.id]}
+                      onToggleSelect={toggleSelected}
                     />
                   ))}
                 </div>
-              </div>
+              </section>
             )
           })}
         </div>
@@ -598,12 +548,19 @@ export default function ContractsPage() {
               selectionMode={selectionMode}
               selected={selectedIds.includes(contract.id)}
               onToggleSelected={toggleSelected}
+              syncStatus={syncStatuses[contract.id]}
             />
           ))}
         </div>
       )}
 
       {viewMode === 'flat' && totalPages > 1 && (
+        <div className="flex items-center justify-center gap-2 mt-6">
+          <button
+            type="button"
+      )}
+
+      {totalPages > 1 && (
         <div className="flex items-center justify-center gap-2">
           <button
             type="button"
@@ -614,6 +571,10 @@ export default function ContractsPage() {
             Previous
           </button>
           <span className="text-sm text-zinc-400">
+      {viewMode === 'flat' && totalPages > 1 && (
+        <div className="flex items-center justify-center gap-2 mt-6">
+          <button
+            type="button"
             onClick={() => setPage((p) => Math.max(1, p - 1))}
             disabled={page === 1}
             className="px-3 py-1.5 rounded-lg bg-zinc-800 text-sm text-zinc-200 hover:bg-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed"
@@ -625,9 +586,6 @@ export default function ContractsPage() {
           </span>
           <button
             type="button"
-            onClick={() => setPage((prev) => Math.min(totalPages, prev + 1))}
-            disabled={page === totalPages}
-            className="rounded-lg bg-zinc-800 px-3 py-2 text-sm text-zinc-100 hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-50"
             onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
             disabled={page === totalPages}
             className="px-3 py-1.5 rounded-lg bg-zinc-800 text-sm text-zinc-200 hover:bg-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed"

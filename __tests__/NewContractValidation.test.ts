@@ -1,6 +1,7 @@
 import { isValidContractId, isValidUrl } from '@/lib/stellar'
 import { parseAlertRule } from '@/lib/rules'
 import { AlertRule, Network, WatchedContract } from '@/types'
+import type { AlertRule, Network, WatchedContract } from '@/types'
 
 const DUPLICATE_CONTRACT_KEY = 'txwatch_duplicate_contract'
 
@@ -137,13 +138,15 @@ describe('NewContract form validation (#14)', () => {
       rules: [validRule],
     })
     expect(emptyRes.label).toBe('Label is required')
-    expect(isFormValid({
-      label: '',
-      contractId: validContractId,
-      network: 'testnet',
-      webhookUrl: 'https://example.com/webhook',
-      rules: [validRule],
-    })).toBe(false)
+    expect(
+      isFormValid({
+        label: '',
+        contractId: validContractId,
+        network: 'testnet',
+        webhookUrl: 'https://example.com/webhook',
+        rules: [validRule],
+      })
+    ).toBe(false)
 
     const tooLongRes = validateForm({
       label: 'a'.repeat(101),

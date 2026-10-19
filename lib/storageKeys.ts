@@ -8,42 +8,42 @@
  */
 
 /** Contracts tracked by the user. */
-export const CONTRACTS_KEY = 'txwatch_contracts';
+export const CONTRACTS_KEY = 'txwatch_contracts'
 
 /** Alerts generated for tracked contracts. */
-export const ALERTS_KEY = 'txwatch_alerts';
+export const ALERTS_KEY = 'txwatch_alerts'
 
 /** User preferences. */
-export const PREFS_KEY = 'txwatch_prefs';
+const PREFS_KEY = 'txwatch_prefs'
 
 /** Last contract sync status. */
-export const SYNC_STATUS_KEY = 'txwatch_sync_status';
+export const SYNC_STATUS_KEY = 'txwatch_sync_status'
 
 /** Number of days to retain alerts. */
-export const ALERT_RETENTION_DAYS_KEY = 'txwatch_alert_retention_days';
+const ALERT_RETENTION_DAYS_KEY = 'txwatch_alert_retention_days'
 
 /**
  * Whether notifications are enabled.
  *
  * Migrated from the legacy colon-prefixed key `txwatch:notifications-enabled`.
  */
-export const NOTIFICATIONS_KEY = 'txwatch_notifications_enabled';
+export const NOTIFICATIONS_KEY = 'txwatch_notifications_enabled'
 
 /**
  * Public key of the connected Freighter wallet.
  *
  * Migrated from the legacy unprefixed key `freighter_public_key`.
  */
-export const FREIGHTER_PUBLIC_KEY = 'txwatch_freighter_public_key';
+export const FREIGHTER_PUBLIC_KEY = 'txwatch_freighter_public_key'
 
 /** Version of the persisted storage schema. */
-export const STORAGE_VERSION_KEY = 'txwatch_storage_version';
+export const STORAGE_VERSION_KEY = 'txwatch_storage_version'
 
 /** Session key: last contract created by the user. */
-export const LAST_CREATED_CONTRACT_KEY = 'txwatch_last_created_contract';
+const LAST_CREATED_CONTRACT_KEY = 'txwatch_last_created_contract'
 
 /** Session key: contract flagged as a duplicate. */
-export const DUPLICATE_CONTRACT_KEY = 'txwatch_duplicate_contract';
+const DUPLICATE_CONTRACT_KEY = 'txwatch_duplicate_contract'
 
 /**
  * Frozen list of every storage key managed by the application.
@@ -62,7 +62,7 @@ export const TXWATCH_KEYS = Object.freeze([
   STORAGE_VERSION_KEY,
   LAST_CREATED_CONTRACT_KEY,
   DUPLICATE_CONTRACT_KEY,
-] as const);
+] as const)
 
 /**
  * Mapping of legacy storage keys to their current equivalents.
@@ -70,10 +70,10 @@ export const TXWATCH_KEYS = Object.freeze([
  * Used by {@link migrateLegacyStorageKeys} to move existing user data to the
  * new, consistently prefixed keys.
  */
-export const LEGACY_KEYS: Readonly<Record<string, string>> = Object.freeze({
+const LEGACY_KEYS: Readonly<Record<string, string>> = Object.freeze({
   'txwatch:notifications-enabled': NOTIFICATIONS_KEY,
   freighter_public_key: FREIGHTER_PUBLIC_KEY,
-});
+})
 
 /**
  * Migrates legacy storage keys to their current equivalents.
@@ -85,40 +85,40 @@ export const LEGACY_KEYS: Readonly<Record<string, string>> = Object.freeze({
  * @returns The list of legacy keys that were migrated.
  */
 export function migrateLegacyStorageKeys(): string[] {
-  const migrated: string[] = [];
+  const migrated: string[] = []
 
   if (typeof window === 'undefined' || !window.localStorage) {
-    return migrated;
+    return migrated
   }
 
-  const storage = window.localStorage;
+  const storage = window.localStorage
 
   for (const [legacyKey, newKey] of Object.entries(LEGACY_KEYS)) {
-    let legacyValue: string | null = null;
+    let legacyValue: string | null = null
 
     try {
-      legacyValue = storage.getItem(legacyKey);
+      legacyValue = storage.getItem(legacyKey)
     } catch {
       // Storage may be unavailable (e.g. privacy mode); skip this key.
-      continue;
+      continue
     }
 
     if (legacyValue === null) {
-      continue;
+      continue
     }
 
     try {
       // Only copy if the new key has not already been set, so we never
       // clobber data written by a newer version of the app.
       if (storage.getItem(newKey) === null) {
-        storage.setItem(newKey, legacyValue);
+        storage.setItem(newKey, legacyValue)
       }
-      storage.removeItem(legacyKey);
-      migrated.push(legacyKey);
+      storage.removeItem(legacyKey)
+      migrated.push(legacyKey)
     } catch {
       // Ignore write failures (e.g. quota exceeded) and continue.
     }
   }
 
-  return migrated;
+  return migrated
 }

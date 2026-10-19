@@ -28,26 +28,41 @@ export async function POST(req: NextRequest) {
     const { url, payload, secret } = data
 
     if (!url || typeof url !== 'string') {
-      return NextResponse.json({ ok: false, error: 'A valid url is required' }, { status: 400 })
+      return NextResponse.json(
+        { ok: false, error: 'A valid url is required' },
+        { status: 400 }
+      )
     }
 
     let parsedUrl: URL
     try {
       parsedUrl = new URL(url)
     } catch {
-      return NextResponse.json({ ok: false, error: 'Invalid URL format' }, { status: 400 })
+      return NextResponse.json(
+        { ok: false, error: 'Invalid URL format' },
+        { status: 400 }
+      )
     }
 
     if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
-      return NextResponse.json({ ok: false, error: 'Only http and https protocols are supported' }, { status: 400 })
+      return NextResponse.json(
+        { ok: false, error: 'Only http and https protocols are supported' },
+        { status: 400 }
+      )
     }
 
     if (isPrivateIp(parsedUrl.hostname)) {
-      return NextResponse.json({ ok: false, error: 'Private and loopback target URLs are blocked' }, { status: 403 })
+      return NextResponse.json(
+        { ok: false, error: 'Private and loopback target URLs are blocked' },
+        { status: 403 }
+      )
     }
 
-    const bodyString = typeof payload === 'string' ? payload : JSON.stringify(payload ?? {})
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+    const bodyString =
+      typeof payload === 'string' ? payload : JSON.stringify(payload ?? {})
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    }
     if (secret) {
       headers[SIGNATURE_HEADER] = await signWebhookPayload(secret, bodyString)
     }
@@ -61,29 +76,56 @@ export async function POST(req: NextRequest) {
         headers,
         body: bodyString,
         signal: controller.signal,
+        // Never follow redirects: the target was only validated for the
+        // submitted host, so a 3xx could point at an internal service (#258).
+        redirect: 'manual',
       })
       clearTimeout(timeoutId)
       const durationMs = Date.now() - startTime
+      if (res.status >= 300 && res.status < 400) {
+        const location = res.headers.get('location')
+        return NextResponse.json({
+          status: res.status,
+          ok: false,
+          durationMs,
+          location,
+          error: `Webhook responded with a redirect${location ? ` to ${location}` : ''}; redirects are not followed`,
+        })
+      }
       return NextResponse.json({
         status: res.status,
         ok: res.ok,
         durationMs,
       })
-    } catch (err: any) {
+    } catch (error) {
+      const err = error as { name?: string; message?: string } | undefined
       clearTimeout(timeoutId)
       const durationMs = Date.now() - startTime
       if (err?.name === 'AbortError') {
         return NextResponse.json(
-          { status: 504, ok: false, durationMs, error: 'Webhook request timed out' },
+          {
+            status: 504,
+            ok: false,
+            durationMs,
+            error: 'Webhook request timed out',
+          },
           { status: 504 }
         )
       }
       return NextResponse.json(
-        { status: 500, ok: false, durationMs, error: err?.message || 'Failed to deliver webhook' },
+        {
+          status: 500,
+          ok: false,
+          durationMs,
+          error: err?.message || 'Failed to deliver webhook',
+        },
         { status: 500 }
       )
     }
-  } catch (err: any) {
-    return NextResponse.json({ ok: false, error: 'Malformed request body' }, { status: 400 })
+  } catch {
+    return NextResponse.json(
+      { ok: false, error: 'Malformed request body' },
+      { status: 400 }
+    )
   }
 }
