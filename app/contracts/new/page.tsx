@@ -11,7 +11,12 @@ import {
 } from '@/lib/stellar'
 import { syncSaveContract } from '@/lib/contractSync'
 import { getContracts } from '@/lib/storage'
-import { buildTestWebhookPayload, describeRule, sendTestWebhook } from '@/lib/api'
+import {
+  buildTestWebhookPayload,
+  describeRule,
+  sendTestWebhook,
+  type TestWebhookResult,
+} from '@/lib/api'
 import { generateWebhookSecret } from '@/lib/webhookSignature'
 import { generateId } from '@/lib/id'
 import CopyButton from '@/components/CopyButton'
@@ -61,6 +66,7 @@ export default function NewContractPage() {
   const [testRuleIndex, setTestRuleIndex] = useState(0)
   const [testStatus, setTestStatus] = useState<'idle' | 'sending' | 'ok' | 'error'>('idle')
   const [testError, setTestError] = useState<string | null>(null)
+  const [testResult, setTestResult] = useState<TestWebhookResult | null>(null)
   const [showPayloadPreview, setShowPayloadPreview] = useState(false)
   const testAbortRef = useRef<AbortController | null>(null)
 
@@ -413,6 +419,7 @@ export default function NewContractPage() {
 
     setTestStatus('sending')
     setTestError(null)
+    setTestResult(null)
 
     try {
       const res = await sendTestWebhook(url, {
@@ -420,11 +427,12 @@ export default function NewContractPage() {
         signalOrTimeoutMs: controller.signal,
         secret: webhookSecret || undefined,
       })
+      setTestResult(res)
       if (res.ok) {
         setTestStatus('ok')
       } else {
         setTestStatus('error')
-        setTestError(`Delivery failed with HTTP status ${res.status}`)
+        setTestError(res.error ?? `Delivery failed with HTTP status ${res.status}`)
       }
     } catch (err) {
       if ((err as { name?: string })?.name === 'AbortError') return
@@ -777,8 +785,29 @@ export default function NewContractPage() {
             </button>
           </div>
 
-          {testStatus === 'ok' && <p className="text-xs text-emerald-400">Webhook delivered successfully.</p>}
-          {testStatus === 'error' && <p className="text-xs text-red-400">{testError}</p>}
+          {(testStatus === 'ok' || testStatus === 'error') && (
+            <div className="space-y-1" data-testid="test-webhook-result">
+              {testStatus === 'ok' ? (
+                <p className="text-xs text-emerald-400">
+                  Webhook delivered (HTTP {testResult?.status})
+                  {testResult?.durationMs !== undefined && ` in ${testResult.durationMs} ms`}.
+                </p>
+              ) : (
+                <p className="text-xs text-red-400">
+                  {testError}
+                  {testResult?.durationMs !== undefined && ` (${testResult.durationMs} ms)`}
+                </p>
+              )}
+              {testResult?.bodySnippet && (
+                <details className="text-xs text-zinc-400">
+                  <summary className="cursor-pointer hover:text-zinc-200">Response body</summary>
+                  <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-all rounded border border-zinc-800 bg-zinc-950 p-2 text-[11px] text-zinc-300">
+                    {testResult.bodySnippet}
+                  </pre>
+                </details>
+              )}
+            </div>
+          )}
         </form>
       </div>
     </>
