@@ -122,7 +122,6 @@ export default function RuleBuilder({
   const functionNameDescribedBy = error ? errorId : undefined
   const functionNamesDescribedBy = error ? errorId : undefined
   const typeDescribedBy = [error ? errorId : null, typeHintId].filter(Boolean).join(' ')
-=======
 
   useEffect(() => {
     if (!showPresets) return
