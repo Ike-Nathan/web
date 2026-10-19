@@ -445,7 +445,7 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md).
 
 ## License
 
-MIT License. See [LICENSE](./LICENSE) for the full text.
+Apache License 2.0. See [LICENSE](./LICENSE) for the full text.
 
 ## Security
 

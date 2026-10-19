@@ -1,6 +1,6 @@
-export const REPO_ORG = 'Tx-wats'
-export const REPO_NAME = 'web'
-export const REPO_FULL_NAME = `${REPO_ORG}/${REPO_NAME}`
+const REPO_ORG = 'Tx-wats'
+const REPO_NAME = 'web'
+const REPO_FULL_NAME = `${REPO_ORG}/${REPO_NAME}`
 
 export const links = {
   repo: `https://github.com/${REPO_FULL_NAME}`,

@@ -12,10 +12,10 @@ export interface ContractsSnapshot {
 }
 
 /** Notification preference persisted in settings. */
-export type NotificationPreference = 'all' | 'alerts' | 'none'
+type NotificationPreference = 'all' | 'alerts' | 'none'
 
 /** View preferences persisted in settings. */
-export interface ViewPreferences {
+interface ViewPreferences {
   theme?: string
   sortBy?: string
   filterNetwork?: Network | 'all'
@@ -47,7 +47,7 @@ export interface AlertHistoryEntry {
   [key: string]: unknown
 }
 
-export interface ImportEntryError {
+interface ImportEntryError {
   index: number
   message: string
 }
@@ -83,7 +83,7 @@ export function buildSnapshot(contracts: WatchedContract[]): ContractsSnapshot {
   }
 }
 
-export const DEFAULT_BACKUP_SETTINGS: BackupSettings = {
+const DEFAULT_BACKUP_SETTINGS: BackupSettings = {
   retentionDays: 30,
   notificationPreference: 'all',
   viewPreferences: {},
@@ -97,6 +97,7 @@ const NOTIFICATION_PREFERENCES: NotificationPreference[] = [
 
 /** Normalizes unknown settings input, falling back to defaults per field. */
 export function normalizeSettings(input: unknown): BackupSettings {
+function normalizeSettings(input: unknown): BackupSettings {
   if (typeof input !== 'object' || input === null)
     return { ...DEFAULT_BACKUP_SETTINGS }
   const s = input as Record<string, unknown>
@@ -135,7 +136,7 @@ export function buildBackup(
 }
 
 /** Light shape check for alert-history entries; returns null when unusable. */
-export function validateAlertEntry(entry: unknown): AlertHistoryEntry | null {
+function validateAlertEntry(entry: unknown): AlertHistoryEntry | null {
   if (typeof entry !== 'object' || entry === null) return null
   const e = entry as Record<string, unknown>
   if (typeof e.contract_id !== 'string' || !e.contract_id) return null

@@ -16,6 +16,7 @@ export interface FetchAlertsOptions {
 export const ALERT_POLL_INTERVAL_MS = 30000
 /** Upper bound for the polling interval while the core keeps failing. */
 export const ALERT_POLL_MAX_INTERVAL_MS = 5 * 60 * 1000
+const ALERT_POLL_INTERVAL_MS = 30000
 
 export function isApiConfigured(): boolean {
   return Boolean(process.env.NEXT_PUBLIC_API_URL)
@@ -78,6 +79,11 @@ export function validateAlertPayload(entry: unknown): AlertPayload | string {
   if (a.is_test !== undefined && typeof a.is_test !== 'boolean')
     return 'is_test must be a boolean'
   return entry as AlertPayload
+  const body = await apiFetch<
+    AlertPayload[] | { alerts: AlertPayload[] } | undefined
+  >(`/alerts?${qs.toString()}`, { signal })
+  if (!body) return []
+  return Array.isArray(body) ? body : (body.alerts ?? [])
 }
 
 /**
@@ -86,7 +92,7 @@ export function validateAlertPayload(entry: unknown): AlertPayload | string {
  * stored alert is uniquely identifiable even though the core payload
  * carries no `id`.
  */
-export function alertKey(
+function alertKey(
   a: Pick<AlertPayload, 'transaction_hash' | 'rule_triggered' | 'timestamp'>
 ): string {
   return `${a.transaction_hash}::${a.rule_triggered}::${a.timestamp}`
@@ -106,23 +112,6 @@ export function filterNewAlerts(
     fresh.push(a)
   }
   return fresh
-}
-
-/**
- * Parse the cached `txwatch_alerts` array once and return the latest alert
- * timestamp per contract id. Avoids re-parsing the whole array for every card
- * on every render (e.g. while typing in the search box).
- */
-export function getLatestAlertTimestamps(): Record<string, number> {
-  const latest: Record<string, number> = {}
-  for (const alert of getAlerts()) {
-    const id = alert.contract_id
-    if (!id) continue
-    const ts = alert.timestamp
-    if (typeof ts !== 'number') continue
-    if (latest[id] === undefined || ts > latest[id]) latest[id] = ts
-  }
-  return latest
 }
 
 /**
