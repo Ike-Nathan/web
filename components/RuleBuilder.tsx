@@ -16,7 +16,7 @@ const RULE_TYPES: AlertRuleType[] = [
 ]
 
 /** Common Soroban patterns that add one or more rules in a single click. */
-export const RULE_PRESETS: { name: string; rules: AlertRule[] }[] = [
+const RULE_PRESETS: { name: string; rules: AlertRule[] }[] = [
   {
     name: 'Token transfers',
     rules: [{ type: 'FunctionCalled', function_name: 'transfer' }],
@@ -30,7 +30,9 @@ export const RULE_PRESETS: { name: string; rules: AlertRule[] }[] = [
   },
   {
     name: 'Admin & upgrades',
-    rules: [{ type: 'AdminFunctionCalled', function_names: ['set_admin', 'upgrade'] }],
+    rules: [
+      { type: 'AdminFunctionCalled', function_names: ['set_admin', 'upgrade'] },
+    ],
   },
   {
     name: 'All failures',
@@ -52,7 +54,9 @@ function hasValidPrecision(value: number): boolean {
 
 /** Formats a number with thousands separators, preserving up to 7 decimals. */
 function formatXlm(value: number): string {
-  return value.toLocaleString('en-US', { maximumFractionDigits: MAX_XLM_DECIMALS })
+  return value.toLocaleString('en-US', {
+    maximumFractionDigits: MAX_XLM_DECIMALS,
+  })
 }
 
 function parseFunctionNames(raw: string): string[] {
@@ -82,10 +86,17 @@ interface RuleBuilderProps {
   onChange: (rules: AlertRule[]) => void
   /** Optional callback fired whenever a rule is added, updated, or removed.
    *  Intended as an analytics hook point — no behavior depends on it. */
-  onRulesChanged?: (rules: AlertRule[], action: 'add' | 'update' | 'remove') => void
+  onRulesChanged?: (
+    rules: AlertRule[],
+    action: 'add' | 'update' | 'remove'
+  ) => void
 }
 
-export default function RuleBuilder({ rules, onChange, onRulesChanged }: RuleBuilderProps) {
+export default function RuleBuilder({
+  rules,
+  onChange,
+  onRulesChanged,
+}: RuleBuilderProps) {
   const idPrefix = useId()
   // Draft fields are held as raw text per type, so switching type never leaves stale fields.
   const [draftType, setDraftType] = useState<AlertRuleType>('AnyTransaction')
@@ -103,6 +114,15 @@ export default function RuleBuilder({ rules, onChange, onRulesChanged }: RuleBui
   const presetsContainerRef = useRef<HTMLDivElement>(null)
   const presetItemRefs = useRef<(HTMLButtonElement | null)[]>([])
   const messageId = `${idPrefix}-message`
+  const typeHintId = `${idPrefix}-type-hint`
+  const thresholdHintId = `${idPrefix}-threshold-hint`
+  const errorId = `${idPrefix}-error`
+  const warningId = `${idPrefix}-warning`
+  const thresholdDescribedBy = [error ? errorId : null, thresholdHintId].filter(Boolean).join(' ')
+  const functionNameDescribedBy = error ? errorId : undefined
+  const functionNamesDescribedBy = error ? errorId : undefined
+  const typeDescribedBy = [error ? errorId : null, typeHintId].filter(Boolean).join(' ')
+=======
 
   useEffect(() => {
     if (!showPresets) return
@@ -140,16 +160,23 @@ export default function RuleBuilder({ rules, onChange, onRulesChanged }: RuleBui
     clearMessages()
   }
 
-  function isDuplicate(newRule: AlertRule, existing: AlertRule[], ignoreIndex: number | null = null): boolean {
+  function isDuplicate(
+    newRule: AlertRule,
+    existing: AlertRule[],
+    ignoreIndex: number | null = null
+  ): boolean {
     const key = ruleKey(newRule)
-    return existing.some((rule, index) => index !== ignoreIndex && ruleKey(rule) === key)
+    return existing.some(
+      (rule, index) => index !== ignoreIndex && ruleKey(rule) === key
+    )
   }
 
   /** Builds a rule from the draft, or sets an error and returns null. */
   function buildRule(): AlertRule | null {
     switch (draftType) {
       case 'LargeTransfer': {
-        const parsed = thresholdText.trim() === '' ? NaN : parseFloat(thresholdText)
+        const parsed =
+          thresholdText.trim() === '' ? NaN : parseFloat(thresholdText)
         if (isNaN(parsed)) {
           setError('Enter a valid XLM threshold')
           return null
@@ -163,7 +190,9 @@ export default function RuleBuilder({ rules, onChange, onRulesChanged }: RuleBui
           return null
         }
         if (parsed > MAX_XLM_THRESHOLD) {
-          setError(`Threshold cannot exceed ${formatXlm(MAX_XLM_THRESHOLD)} XLM`)
+          setError(
+            `Threshold cannot exceed ${formatXlm(MAX_XLM_THRESHOLD)} XLM`
+          )
           return null
         }
         return { type: 'LargeTransfer', threshold_xlm: parsed }
@@ -175,7 +204,9 @@ export default function RuleBuilder({ rules, onChange, onRulesChanged }: RuleBui
           return null
         }
         if (!isValidFunctionName(name)) {
-          setError('Function name must start with a letter or underscore, contain only alphanumeric characters and underscores, and be at most 32 characters')
+          setError(
+            'Function name must start with a letter or underscore, contain only alphanumeric characters and underscores, and be at most 32 characters'
+          )
           return null
         }
         return { type: 'FunctionCalled', function_name: name }
@@ -191,7 +222,10 @@ export default function RuleBuilder({ rules, onChange, onRulesChanged }: RuleBui
           setError(`Invalid function names: ${invalid.join(', ')}`)
           return null
         }
-        return { type: 'AdminFunctionCalled', function_names: [...valid].sort() }
+        return {
+          type: 'AdminFunctionCalled',
+          function_names: [...valid].sort(),
+        }
       }
       case 'AnyTransaction':
       case 'TransactionFailed':
@@ -204,7 +238,8 @@ export default function RuleBuilder({ rules, onChange, onRulesChanged }: RuleBui
     if (!built) {
       if (draftType === 'LargeTransfer') thresholdInputRef.current?.focus()
       if (draftType === 'FunctionCalled') functionNameInputRef.current?.focus()
-      if (draftType === 'AdminFunctionCalled') functionNamesInputRef.current?.focus()
+      if (draftType === 'AdminFunctionCalled')
+        functionNamesInputRef.current?.focus()
       return
     }
     if (editingIndex !== null) {
@@ -213,7 +248,10 @@ export default function RuleBuilder({ rules, onChange, onRulesChanged }: RuleBui
         return
       }
       const previous = rules[editingIndex]
-      const newRule: AlertRule = previous.enabled === undefined ? built : { ...built, enabled: previous.enabled }
+      const newRule: AlertRule =
+        previous.enabled === undefined
+          ? built
+          : { ...built, enabled: previous.enabled }
       const updated = [...rules]
       updated[editingIndex] = newRule
       onChange(updated)
@@ -251,9 +289,13 @@ export default function RuleBuilder({ rules, onChange, onRulesChanged }: RuleBui
   function startEdit(index: number) {
     const rule = rules[index]
     setDraftType(rule.type)
-    setThresholdText(rule.type === 'LargeTransfer' ? String(rule.threshold_xlm) : '')
+    setThresholdText(
+      rule.type === 'LargeTransfer' ? String(rule.threshold_xlm) : ''
+    )
     setFunctionName(rule.type === 'FunctionCalled' ? rule.function_name : '')
-    setFunctionNamesText(rule.type === 'AdminFunctionCalled' ? rule.function_names.join(', ') : '')
+    setFunctionNamesText(
+      rule.type === 'AdminFunctionCalled' ? rule.function_names.join(', ') : ''
+    )
     setEditingIndex(index)
     clearMessages()
   }
@@ -264,7 +306,9 @@ export default function RuleBuilder({ rules, onChange, onRulesChanged }: RuleBui
   }
 
   function toggleRule(index: number) {
-    const updated = rules.map((r, i) => (i === index ? { ...r, enabled: !isRuleEnabled(r) } : r))
+    const updated = rules.map((r, i) =>
+      i === index ? { ...r, enabled: !isRuleEnabled(r) } : r
+    )
     onChange(updated)
     onRulesChanged?.(updated, 'update')
   }
@@ -286,7 +330,9 @@ export default function RuleBuilder({ rules, onChange, onRulesChanged }: RuleBui
   }
 
   function handlePresetKeyDown(event: KeyboardEvent<HTMLUListElement>) {
-    const currentIndex = presetItemRefs.current.findIndex((item) => item === document.activeElement)
+    const currentIndex = presetItemRefs.current.findIndex(
+      (item) => item === document.activeElement
+    )
     let nextIndex: number | null = null
 
     switch (event.key) {
@@ -294,7 +340,8 @@ export default function RuleBuilder({ rules, onChange, onRulesChanged }: RuleBui
         nextIndex = (currentIndex + 1) % RULE_PRESETS.length
         break
       case 'ArrowUp':
-        nextIndex = (currentIndex - 1 + RULE_PRESETS.length) % RULE_PRESETS.length
+        nextIndex =
+          (currentIndex - 1 + RULE_PRESETS.length) % RULE_PRESETS.length
         break
       case 'Home':
         nextIndex = 0
@@ -320,23 +367,40 @@ export default function RuleBuilder({ rules, onChange, onRulesChanged }: RuleBui
     <div className="space-y-4">
       <div className="bg-zinc-800/50 border border-zinc-700 rounded-lg p-4 space-y-3">
         <div>
-          <label htmlFor={`${idPrefix}-type`} className="block text-xs font-medium text-zinc-400 mb-1">Rule Type</label>
+          <label
+            htmlFor={`${idPrefix}-type`}
+            className="block text-xs font-medium text-zinc-400 mb-1"
+          >
+            Rule Type
+          </label>
           <select
             id={`${idPrefix}-type`}
             value={draftType}
+            aria-invalid={error ? true : undefined}
+            aria-describedby={typeDescribedBy}
             onChange={(e) => handleTypeChange(e.target.value as AlertRuleType)}
             className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-indigo-500"
           >
             {RULE_TYPES.map((t) => (
-              <option key={t} value={t}>{getRuleMeta(t).label}</option>
+              <option key={t} value={t}>
+                {getRuleMeta(t).label}
+              </option>
             ))}
           </select>
-          <p className="text-xs text-zinc-500 mt-1">{getRuleMeta(draftType).description}</p>
+          <p id={typeHintId} className="text-xs text-zinc-500 mt-1">{getRuleMeta(draftType).description}</p>
+          <p className="text-xs text-zinc-500 mt-1">
+            {getRuleMeta(draftType).description}
+          </p>
         </div>
 
         {draftType === 'LargeTransfer' && (
           <div>
-            <label htmlFor={`${idPrefix}-threshold`} className="block text-xs font-medium text-zinc-400 mb-1">Threshold (XLM)</label>
+            <label
+              htmlFor={`${idPrefix}-threshold`}
+              className="block text-xs font-medium text-zinc-400 mb-1"
+            >
+              Threshold (XLM)
+            </label>
             <input
               ref={thresholdInputRef}
               id={`${idPrefix}-threshold`}
@@ -346,7 +410,7 @@ export default function RuleBuilder({ rules, onChange, onRulesChanged }: RuleBui
               placeholder="e.g. 10000"
               value={thresholdText}
               aria-invalid={error ? true : undefined}
-              aria-describedby={error ? messageId : undefined}
+              aria-describedby={thresholdDescribedBy}
               onChange={(e) => {
                 setThresholdText(e.target.value)
                 clearMessages()
@@ -354,7 +418,7 @@ export default function RuleBuilder({ rules, onChange, onRulesChanged }: RuleBui
               className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-indigo-500"
             />
             {!isNaN(thresholdPreview) && (
-              <p className="text-xs text-zinc-500 mt-1">
+              <p id={thresholdHintId} className="text-xs text-zinc-500 mt-1">
                 Threshold: {formatXlm(thresholdPreview)} XLM
               </p>
             )}
@@ -363,7 +427,12 @@ export default function RuleBuilder({ rules, onChange, onRulesChanged }: RuleBui
 
         {draftType === 'FunctionCalled' && (
           <div>
-            <label htmlFor={`${idPrefix}-function-name`} className="block text-xs font-medium text-zinc-400 mb-1">Function Name</label>
+            <label
+              htmlFor={`${idPrefix}-function-name`}
+              className="block text-xs font-medium text-zinc-400 mb-1"
+            >
+              Function Name
+            </label>
             <input
               ref={functionNameInputRef}
               id={`${idPrefix}-function-name`}
@@ -371,7 +440,7 @@ export default function RuleBuilder({ rules, onChange, onRulesChanged }: RuleBui
               placeholder="e.g. transfer"
               value={functionName}
               aria-invalid={error ? true : undefined}
-              aria-describedby={error ? messageId : undefined}
+              aria-describedby={functionNameDescribedBy}
               onChange={(e) => {
                 setFunctionName(e.target.value)
                 clearMessages()
@@ -383,8 +452,12 @@ export default function RuleBuilder({ rules, onChange, onRulesChanged }: RuleBui
 
         {draftType === 'AdminFunctionCalled' && (
           <div>
-            <label htmlFor={`${idPrefix}-function-names`} className="block text-xs font-medium text-zinc-400 mb-1">
-              Function Names <span className="text-zinc-600">(comma separated)</span>
+            <label
+              htmlFor={`${idPrefix}-function-names`}
+              className="block text-xs font-medium text-zinc-400 mb-1"
+            >
+              Function Names{' '}
+              <span className="text-zinc-600">(comma separated)</span>
             </label>
             <input
               ref={functionNamesInputRef}
@@ -393,7 +466,7 @@ export default function RuleBuilder({ rules, onChange, onRulesChanged }: RuleBui
               placeholder="e.g. set_admin, upgrade, migrate"
               value={functionNamesText}
               aria-invalid={error ? true : undefined}
-              aria-describedby={error ? messageId : undefined}
+              aria-describedby={functionNamesDescribedBy}
               onChange={(e) => {
                 setFunctionNamesText(e.target.value)
                 clearMessages()
@@ -404,8 +477,8 @@ export default function RuleBuilder({ rules, onChange, onRulesChanged }: RuleBui
         )}
 
         <div id={messageId} aria-live="polite" aria-atomic="true">
-          {error && <p className="text-xs text-red-400">{error}</p>}
-          {warning && <p className="text-xs text-amber-400">{warning}</p>}
+          {error && <p id={errorId} className="text-xs text-red-400">{error}</p>}
+          {warning && <p id={warningId} className="text-xs text-amber-400">{warning}</p>}
         </div>
 
         <div className="flex flex-wrap gap-2">
@@ -449,7 +522,9 @@ export default function RuleBuilder({ rules, onChange, onRulesChanged }: RuleBui
                 {RULE_PRESETS.map((preset, index) => (
                   <li key={preset.name}>
                     <button
-                      ref={(element) => { presetItemRefs.current[index] = element }}
+                      ref={(element) => {
+                        presetItemRefs.current[index] = element
+                      }}
                       type="button"
                       role="menuitem"
                       onClick={() => applyPreset(preset.rules)}
@@ -476,7 +551,9 @@ export default function RuleBuilder({ rules, onChange, onRulesChanged }: RuleBui
               >
                 <div className="flex items-center gap-2 min-w-0">
                   <AlertRuleBadge type={rule.type} />
-                  <span className="text-sm text-zinc-300 truncate">{formatRuleSummary(rule)}</span>
+                  <span className="text-sm text-zinc-300 truncate">
+                    {formatRuleSummary(rule)}
+                  </span>
                 </div>
                 <div className="flex gap-2 shrink-0">
                   <button

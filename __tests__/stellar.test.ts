@@ -1,6 +1,11 @@
 import { vi } from 'vitest'
-import { isValidContractId, normalizeContractId, contractExists } from '@/lib/stellar'
-import { isValidContractId, mapFreighterNetwork } from '@/lib/stellar'
+import {
+  isValidContractId,
+  normalizeContractId,
+  contractExists,
+  mapFreighterNetwork,
+  validateWebhookUrl,
+} from '@/lib/stellar'
 
 describe('isValidContractId', () => {
   it('accepts valid contract IDs', () => {
@@ -128,6 +133,86 @@ describe('normalizeContractId', () => {
     ).toEqual({
       contractId: 'CDSO4GGZH7KBUQYKOIQDCMCFSRYEPOVDUX7Z4IB5TWNTLT2GDRKDQOYR',
     })
+  })
+})
+
+describe('validateWebhookUrl', () => {
+  it('accepts a plain https URL on mainnet', () => {
+    expect(validateWebhookUrl('https://example.com/hook', 'mainnet')).toEqual({ valid: true })
+  })
+
+  it('accepts a plain http URL on testnet', () => {
+    expect(validateWebhookUrl('http://example.com/hook', 'testnet')).toEqual({ valid: true })
+  })
+
+  it('rejects URLs with credentials', () => {
+    const result = validateWebhookUrl('https://user:pass@example.com/hook', 'mainnet')
+    expect(result.valid).toBe(false)
+    expect(result.code).toBe('credentials')
+  })
+
+  it('rejects credentials even on testnet', () => {
+    const result = validateWebhookUrl('http://user:pass@10.0.0.5/hook', 'testnet')
+    expect(result.valid).toBe(false)
+    expect(result.code).toBe('credentials')
+  })
+
+  it('returns http_warning for http URLs on mainnet', () => {
+    const result = validateWebhookUrl('http://example.com/hook', 'mainnet')
+    expect(result.valid).toBe(true)
+    expect(result.code).toBe('http_warning')
+  })
+
+  it('rejects loopback addresses', () => {
+    for (const url of [
+      'https://localhost/hook',
+      'https://127.0.0.1/hook',
+      'https://[::1]/hook',
+    ]) {
+      const result = validateWebhookUrl(url, 'mainnet')
+      expect(result.valid).toBe(false)
+      expect(result.code).toBe('loopback')
+    }
+  })
+
+  it('rejects private network ranges', () => {
+    for (const url of [
+      'https://10.0.0.5/hook',
+      'https://192.168.1.10/hook',
+      'https://172.16.0.1/hook',
+      'https://169.254.169.254/hook',
+    ]) {
+      const result = validateWebhookUrl(url, 'mainnet')
+      expect(result.valid).toBe(false)
+      expect(result.code).toBe('private')
+    }
+  })
+
+  it('rejects malformed URLs', () => {
+    const result = validateWebhookUrl('not-a-url', 'mainnet')
+    expect(result.valid).toBe(false)
+    expect(result.code).toBe('invalid')
+  })
+
+  it('rejects non-http(s) protocols', () => {
+    const result = validateWebhookUrl('ftp://example.com/hook', 'mainnet')
+    expect(result.valid).toBe(false)
+    expect(result.code).toBe('invalid')
+  })
+
+  it('maps every code to a user-facing message', () => {
+    const messages = getWebhookUrlMessages()
+    for (const code of ['invalid', 'credentials', 'http_warning', 'loopback', 'private'] as const) {
+      expect(typeof messages[code]).toBe('string')
+      expect(messages[code].length).toBeGreaterThan(0)
+    }
+  })
+
+  it('treats http_warning as a warning and all other codes as errors', () => {
+    expect(isWebhookUrlWarning('http_warning')).toBe(true)
+    for (const code of ['invalid', 'credentials', 'loopback', 'private'] as const) {
+      expect(isWebhookUrlWarning(code)).toBe(false)
+    }
   })
 })
 

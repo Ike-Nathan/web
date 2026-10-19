@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useId } from 'react';
 
 export type StellarNetwork = 'mainnet' | 'testnet' | 'futurenet';
 
@@ -8,35 +8,26 @@ interface NetworkEditFieldProps {
   currentNetwork: StellarNetwork;
   onNetworkChange: (network: StellarNetwork) => void | Promise<void>;
   disabled?: boolean;
-  /**
-   * Optional duplicate check run before the switch is committed.
-   * Should resolve to true when a contract with the same contract_id
-   * already exists on the target network (i.e. the switch is a duplicate).
-   */
   checkDuplicate?: (network: StellarNetwork) => boolean | Promise<boolean>;
-  /**
-   * Called after a successful switch so the caller can clear network-scoped
-   * state (alert history / duplicate-detection context), matching the warning copy.
-   */
   onAlertHistoryCleared?: (network: StellarNetwork) => void | Promise<void>;
 }
 
 const NETWORK_OPTIONS: { value: StellarNetwork; label: string }[] = [
   { value: 'mainnet',   label: 'Mainnet (Public)' },
-  { value: 'testnet',   label: 'Testnet'           },
-  { value: 'futurenet', label: 'Futurenet'         },
+  { value: 'testnet',   label: 'Testnet'          },
+  { value: 'futurenet', label: 'Futurenet'        },
 ];
 
 const CAUTION_MESSAGES: Record<StellarNetwork, string> = {
   mainnet:
-    'Switching to Mainnet: alert rules and duplicate-detection history are network-scoped. ' +
-    'Existing alerts may not match mainnet transactions until re-evaluated.',
+    'Switching to Mainnet: Alert history for the current network will be permanently deleted. ' +
+    'Duplicate-detection context will reset.',
   testnet:
-    'Switching to Testnet: this contract will no longer watch mainnet activity. ' +
+    'Switching to Testnet: Alert history for the current network will be permanently deleted. ' +
     'Duplicate-detection context will reset.',
   futurenet:
-    'Switching to Futurenet: this is an experimental network. ' +
-    'Alert history and duplicate detection will be cleared.',
+    'Switching to Futurenet: Alert history for the current network will be permanently deleted. ' +
+    'Duplicate-detection context will reset.',
 };
 
 export function NetworkEditField({
@@ -46,6 +37,7 @@ export function NetworkEditField({
   checkDuplicate,
   onAlertHistoryCleared,
 }: NetworkEditFieldProps) {
+  const idPrefix = useId();
   const [editing, setEditing]         = useState(false);
   const [pendingNetwork, setPending]  = useState<StellarNetwork | null>(null);
   const [saving, setSaving]           = useState(false);
@@ -54,7 +46,12 @@ export function NetworkEditField({
 
   function handleSelectChange(e: React.ChangeEvent<HTMLSelectElement>) {
     const selected = e.target.value as StellarNetwork;
-    if (selected === currentNetwork) return;
+    if (selected === currentNetwork) {
+      setPending(null);
+      setShowWarning(false);
+      setError(null);
+      return;
+    }
     setError(null);
     setPending(selected);
     setShowWarning(true);
@@ -72,17 +69,19 @@ export function NetworkEditField({
             `A contract with this contract ID already exists on ${pendingNetwork}. ` +
               'Choose a different network or remove the duplicate first.',
           );
+          setSaving(false);
           return;
         }
       }
       await onNetworkChange(pendingNetwork);
-      // Warning copy states alert history is cleared on switch.
       if (onAlertHistoryCleared) {
         await onAlertHistoryCleared(pendingNetwork);
       }
       setShowWarning(false);
       setPending(null);
       setEditing(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Network change failed.');
     } finally {
       setSaving(false);
     }
@@ -92,19 +91,20 @@ export function NetworkEditField({
     setPending(null);
     setShowWarning(false);
     setError(null);
+    setEditing(false);
   }
 
   if (!editing) {
     return (
       <div className="flex items-center gap-2">
-        <span className="text-sm font-medium text-foreground capitalize">
+        <span className="text-sm font-medium text-zinc-100 capitalize">
           {currentNetwork}
         </span>
         {!disabled && (
           <button
             type="button"
             onClick={() => setEditing(true)}
-            className="text-xs text-primary hover:underline"
+            className="text-xs text-indigo-400 hover:underline"
             aria-label="Edit network"
           >
             Edit
@@ -118,10 +118,10 @@ export function NetworkEditField({
     <div className="space-y-3">
       <div className="flex items-center gap-2">
         <select
-          defaultValue={currentNetwork}
+          value={pendingNetwork ?? currentNetwork}
           onChange={handleSelectChange}
           disabled={saving}
-          className="rounded-md border border-input bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+          className="rounded-md border border-zinc-700 bg-zinc-950 px-3 py-1.5 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
           aria-label="Select network"
         >
           {NETWORK_OPTIONS.map(opt => (
@@ -132,8 +132,8 @@ export function NetworkEditField({
         </select>
         <button
           type="button"
-          onClick={() => { setEditing(false); setPending(null); setShowWarning(false); setError(null); }}
-          className="text-xs text-muted-foreground hover:text-foreground"
+          onClick={handleCancel}
+          className="text-xs text-zinc-400 hover:text-zinc-200"
           aria-label="Cancel network edit"
         >
           Cancel
@@ -144,29 +144,29 @@ export function NetworkEditField({
         <div
           role="alertdialog"
           aria-modal="false"
-          aria-labelledby="network-warning-title"
-          aria-describedby="network-warning-desc"
-          className="rounded-md border border-yellow-400 bg-yellow-50 dark:bg-yellow-900/20 p-4 space-y-3"
+          aria-labelledby={`${idPrefix}-network-warning-title`}
+          aria-describedby={`${idPrefix}-network-warning-desc`}
+          className="rounded-md border border-amber-500/30 bg-amber-500/10 p-4 space-y-3"
         >
           <div className="flex items-start gap-2">
-            <span aria-hidden="true" className="text-yellow-600 text-lg leading-none mt-0.5">⚠</span>
+            <span aria-hidden="true" className="text-amber-500 text-lg leading-none mt-0.5">⚠</span>
             <div>
               <p
-                id="network-warning-title"
-                className="text-sm font-semibold text-yellow-900 dark:text-yellow-300"
+                id={`${idPrefix}-network-warning-title`}
+                className="text-sm font-semibold text-amber-500"
               >
                 Network change warning
               </p>
               <p
-                id="network-warning-desc"
-                className="mt-1 text-xs text-yellow-800 dark:text-yellow-400"
+                id={`${idPrefix}-network-warning-desc`}
+                className="mt-1 text-xs text-amber-200/80"
               >
                 {CAUTION_MESSAGES[pendingNetwork]}
               </p>
             </div>
           </div>
           {error && (
-            <p role="alert" className="text-xs font-medium text-red-600 dark:text-red-400">
+            <p role="alert" className="text-xs font-medium text-red-400">
               {error}
             </p>
           )}
@@ -175,7 +175,7 @@ export function NetworkEditField({
               type="button"
               onClick={handleCancel}
               disabled={saving}
-              className="rounded-md border border-border px-3 py-1.5 text-xs hover:bg-muted transition-colors"
+              className="rounded-md border border-zinc-700 px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 transition-colors"
             >
               Keep current
             </button>
@@ -184,7 +184,7 @@ export function NetworkEditField({
               onClick={handleConfirm}
               disabled={saving}
               aria-label={`Confirm switch to ${pendingNetwork}`}
-              className="rounded-md bg-yellow-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-yellow-600 transition-colors disabled:opacity-50"
+              className="rounded-md bg-amber-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-amber-500 transition-colors disabled:opacity-50"
             >
               {saving ? 'Saving…' : `Switch to ${pendingNetwork}`}
             </button>

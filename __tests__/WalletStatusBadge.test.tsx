@@ -1,5 +1,4 @@
 import { vi } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
 import { act, render, screen, waitFor } from '@testing-library/react'
 import WalletStatusBadge from '@/components/WalletStatusBadge'
 
@@ -9,55 +8,6 @@ describe('WalletStatusBadge', () => {
     vi.clearAllMocks()
   })
 
-  it('initially renders checking state', () => {
-    ;(window as any).freighter = {
-      isConnected: vi.fn().mockReturnValue(new Promise(() => {})),
-    }
-
-    render(<WalletStatusBadge />)
-    expect(screen.getByText('Checking…')).toBeInTheDocument()
-  })
-
-  it('renders connected when isConnected resolves true', async () => {
-    ;(window as any).freighter = {
-      isConnected: vi.fn().mockResolvedValue(true),
-    }
-
-    render(<WalletStatusBadge />)
-    await waitFor(() => {
-      expect(screen.getByText('Connected')).toBeInTheDocument()
-    })
-  })
-
-  it('renders disconnected when isConnected resolves false', async () => {
-    ;(window as any).freighter = {
-      isConnected: vi.fn().mockResolvedValue(false),
-    }
-
-    render(<WalletStatusBadge />)
-    await waitFor(() => {
-      expect(screen.getByText('Disconnected')).toBeInTheDocument()
-    })
-  })
-
-  it('falls back to disconnected when isConnected rejects', async () => {
-    ;(window as any).freighter = {
-      isConnected: vi.fn().mockRejectedValue(new Error('Extension error')),
-    }
-
-    render(<WalletStatusBadge />)
-    await waitFor(() => {
-      expect(screen.getByText('Disconnected')).toBeInTheDocument()
-    })
-  })
-
-  it('renders unavailable when window.freighter is not present', async () => {
-    delete (window as any).freighter
-
-    render(<WalletStatusBadge />)
-    await waitFor(() => {
-      expect(screen.getByText('Unavailable')).toBeInTheDocument()
-    })
   it('shows a neutral checking state while isConnected is pending', async () => {
     let resolve: (value: boolean) => void = () => {}
     ;(window as any).freighter = {
@@ -126,5 +76,36 @@ describe('WalletStatusBadge', () => {
       resolve(true)
     })
     expect(screen.queryByText('Connected')).not.toBeInTheDocument()
+  })
+
+  describe('network pill', () => {
+    function mockFreighter(network: string) {
+      ;(window as any).freighter = {
+        isConnected: vi.fn().mockResolvedValue(true),
+        getNetwork: vi.fn().mockResolvedValue(network),
+      }
+    }
+
+    it.each([
+      ['PUBLIC', 'Mainnet'],
+      ['TESTNET', 'Testnet'],
+      ['FUTURENET', 'Futurenet'],
+    ])('renders the friendly label for %s', async (id, label) => {
+      mockFreighter(id)
+
+      render(<WalletStatusBadge />)
+
+      await waitFor(() => expect(screen.getByText(label)).toBeInTheDocument())
+      expect(screen.queryByText(id)).not.toBeInTheDocument()
+    })
+
+    it('renders "Custom network" with the raw id in the tooltip for unknown ids', async () => {
+      mockFreighter('SANDBOX')
+
+      render(<WalletStatusBadge />)
+
+      await waitFor(() => expect(screen.getByText('Custom network')).toBeInTheDocument())
+      expect(screen.getByTitle('SANDBOX')).toBeInTheDocument()
+    })
   })
 })

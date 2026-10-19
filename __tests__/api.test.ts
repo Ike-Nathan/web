@@ -3,6 +3,7 @@ import {
   apiFetch,
   buildTestWebhookPayload,
   describeRule,
+  isApiConfigured,
   joinUrl,
   removeContract,
   sendTestWebhook,
@@ -318,6 +319,22 @@ describe('joinUrl', () => {
     expect(joinUrl('http://a/', '/b')).toBe('http://a/b')
     expect(joinUrl('http://a', 'b')).toBe('http://a/b')
     expect(joinUrl('', '/b')).toBe('/b')
+  })
+})
+
+describe('isApiConfigured', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
+  it('returns true when NEXT_PUBLIC_API_URL is set', () => {
+    vi.stubEnv('NEXT_PUBLIC_API_URL', 'http://api/')
+    expect(isApiConfigured()).toBe(true)
+  })
+
+  it('returns false when NEXT_PUBLIC_API_URL is unset', () => {
+    vi.stubEnv('NEXT_PUBLIC_API_URL', '')
+    expect(isApiConfigured()).toBe(false)
   })
 })
 

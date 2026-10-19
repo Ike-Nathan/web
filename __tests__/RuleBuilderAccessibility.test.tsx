@@ -14,7 +14,33 @@ describe('RuleBuilder accessibility', () => {
 
     const error = screen.getByText(/enter a valid xlm threshold/i)
     expect(error.parentElement).toHaveAttribute('aria-live', 'polite')
-    expect(screen.getByLabelText(/threshold \(xlm\)/i)).toHaveFocus()
+    const threshold = screen.getByLabelText(/threshold \(xlm\)/i)
+    expect(threshold).toHaveFocus()
+    expect(threshold).toHaveAttribute('aria-invalid', 'true')
+    expect(threshold).toHaveAttribute('aria-describedby')
+    const describedBy = threshold.getAttribute('aria-describedby') as string
+    expect(describedBy.split(' ')).toContain(error.id)
+  })
+
+  it('associates labels with their inputs via htmlFor and id', () => {
+    render(<RuleBuilder rules={[]} onChange={vi.fn()} />)
+
+    const typeInput = screen.getByLabelText(/rule type/i)
+    expect(typeInput).toHaveAttribute('id')
+
+    const label = screen.getByText(/rule type/i)
+    expect(label.tagName).toBe('LABEL')
+    expect(label).toHaveAttribute('for', typeInput.getAttribute('id'))
+
+    fireEvent.change(typeInput, { target: { value: 'LargeTransfer' } })
+
+    const threshold = screen.getByLabelText(/threshold \(xlm\)/i)
+    expect(threshold).toHaveAttribute('id')
+    expect(threshold).not.toHaveAttribute('aria-invalid', 'true')
+
+    const thresholdLabel = screen.getByText(/threshold \(xlm\)/i)
+    expect(thresholdLabel.tagName).toBe('LABEL')
+    expect(thresholdLabel).toHaveAttribute('for', threshold.getAttribute('id'))
   })
 
   it('announces duplicate-rule warnings', () => {

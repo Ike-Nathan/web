@@ -1,5 +1,84 @@
+import { isValidContractId, validateWebhookUrl } from '@/lib/stellar'
 import { isValidContractId, isValidUrl } from '@/lib/stellar'
+import { parseAlertRule } from '@/lib/rules'
 import { AlertRule, Network, WatchedContract } from '@/types'
+import type { AlertRule, Network, WatchedContract } from '@/types'
+
+const DUPLICATE_CONTRACT_KEY = 'txwatch_duplicate_contract'
+
+interface DuplicateContractPrefill {
+  label?: string
+  contract_id?: string
+  network?: Network
+  webhook_url?: string
+  rules?: unknown[]
+}
+
+interface PrefillResult {
+  label: string
+  contractId: string
+  network: Network
+  webhookUrl: string
+  rules: AlertRule[]
+  notice?: string
+}
+
+function readDuplicatePrefill(raw: string | null): PrefillResult | null {
+  if (!raw) return null
+
+  let data: DuplicateContractPrefill
+  try {
+    data = JSON.parse(raw) as DuplicateContractPrefill
+  } catch {
+    return null
+  }
+  if (!data || typeof data !== 'object') return null
+
+  const rawRules = Array.isArray(data.rules) ? data.rules : []
+  const rules: AlertRule[] = []
+  let dropped = 0
+  for (const candidate of rawRules) {
+    const parsed = parseAlertRule(candidate)
+    if (parsed) {
+      rules.push(parsed)
+    } else {
+      dropped += 1
+    }
+  }
+
+  return {
+    label: typeof data.label === 'string' ? data.label : '',
+    contractId: typeof data.contract_id === 'string' ? data.contract_id : '',
+    network: data.network === 'mainnet' ? 'mainnet' : 'testnet',
+    webhookUrl: typeof data.webhook_url === 'string' ? data.webhook_url : '',
+    rules,
+    notice:
+      dropped > 0
+        ? `${dropped} prefill rule${dropped === 1 ? '' : 's'} could not be restored and ${
+            dropped === 1 ? 'was' : 'were'
+          } dropped`
+        : undefined,
+  }
+}
+
+const WEBHOOK_URL_MESSAGES: Record<string, string> = {
+  invalid_url: 'Must be a valid http/https URL',
+  credentials_in_url: 'Webhook URL must not contain credentials',
+  http_on_mainnet: 'Use HTTPS for webhooks on mainnet',
+  loopback_address: 'Webhook URL must not point to a loopback address',
+  private_address: 'Webhook URL must not point to a private address',
+}
+
+function validateWebhookUrlField(
+  url: string,
+  network: Network
+): { error?: string; warning?: string } {
+  const result = validateWebhookUrl(url, network)
+  if (result.valid) return {}
+  const message = WEBHOOK_URL_MESSAGES[result.code] ?? 'Must be a valid http/https URL'
+  if (result.code === 'http_warning') return { warning: message }
+  return { error: message }
+}
 
 interface FormErrors {
   label?: string
@@ -51,8 +130,9 @@ function validateForm({
 
   if (!trimmedWebhookUrl) {
     e.webhook_url = 'Webhook URL is required'
-  } else if (!isValidUrl(trimmedWebhookUrl)) {
-    e.webhook_url = 'Must be a valid http/https URL'
+  } else {
+    const { error } = validateWebhookUrlField(trimmedWebhookUrl, network)
+    if (error) e.webhook_url = error
   }
 
   if (rules.length === 0) {
@@ -79,13 +159,15 @@ describe('NewContract form validation (#14)', () => {
       rules: [validRule],
     })
     expect(emptyRes.label).toBe('Label is required')
-    expect(isFormValid({
-      label: '',
-      contractId: validContractId,
-      network: 'testnet',
-      webhookUrl: 'https://example.com/webhook',
-      rules: [validRule],
-    })).toBe(false)
+    expect(
+      isFormValid({
+        label: '',
+        contractId: validContractId,
+        network: 'testnet',
+        webhookUrl: 'https://example.com/webhook',
+        rules: [validRule],
+      })
+    ).toBe(false)
 
     const tooLongRes = validateForm({
       label: 'a'.repeat(101),
@@ -173,6 +255,64 @@ describe('NewContract form validation (#14)', () => {
     expect(invalidRes.webhook_url).toBe('Must be a valid http/https URL')
   })
 
+  it('maps credentials_in_url to an error', () => {
+    const res = validateForm({
+      label: 'Test Contract',
+      contractId: validContractId,
+      network: 'testnet',
+      webhookUrl: 'https://user:pass@example.com/hook',
+      rules: [validRule],
+    })
+    expect(res.webhook_url).toBe('Webhook URL must not contain credentials')
+  })
+
+  it('treats http on mainnet as a dismissible warning, not an error', () => {
+    const params = {
+      label: 'Test Contract',
+      contractId: validContractId,
+      network: 'mainnet' as Network,
+      webhookUrl: 'http://example.com/hook',
+      rules: [validRule],
+    }
+    const res = validateForm(params)
+    expect(res.webhook_url).toBeUndefined()
+    expect(isFormValid(params)).toBe(true)
+    expect(validateWebhookUrlField('http://example.com/hook', 'mainnet')).toEqual({
+      warning: 'Use HTTPS for webhooks on mainnet',
+    })
+  })
+
+  it('maps loopback_address to an error', () => {
+    const res = validateForm({
+      label: 'Test Contract',
+      contractId: validContractId,
+      network: 'testnet',
+      webhookUrl: 'http://127.0.0.1/hook',
+      rules: [validRule],
+    })
+    expect(res.webhook_url).toBe('Webhook URL must not point to a loopback address')
+  })
+
+  it('maps private_address to an error', () => {
+    const res = validateForm({
+      label: 'Test Contract',
+      contractId: validContractId,
+      network: 'mainnet',
+      webhookUrl: 'http://user:pass@10.0.0.5/hook',
+      rules: [validRule],
+    })
+    expect(res.webhook_url).toBe('Webhook URL must not contain credentials')
+
+    const privateRes = validateForm({
+      label: 'Test Contract',
+      contractId: validContractId,
+      network: 'mainnet',
+      webhookUrl: 'https://10.0.0.5/hook',
+      rules: [validRule],
+    })
+    expect(privateRes.webhook_url).toBe('Webhook URL must not point to a private address')
+  })
+
   it('asserts rules error is visible when no rules are configured', () => {
     const noRulesRes = validateForm({
       label: 'Test Contract',
@@ -196,5 +336,153 @@ describe('NewContract form validation (#14)', () => {
     const errors = validateForm(validParams)
     expect(Object.keys(errors)).toHaveLength(0)
     expect(isFormValid(validParams)).toBe(true)
+  })
+})
+
+describe('NewContract save flow (#194)', () => {
+  const validContractId = 'CDSO4GGZH7KBUQYKOIQDCMCFSRYEPOVDUX7Z4IB5TWNTLT2GDRKDQOYR'
+  const validRule: AlertRule = { type: 'AnyTransaction' }
+
+  function makeHarness() {
+    const stored: WatchedContract[] = []
+    const redirect = jest.fn()
+
+    const saveContract = jest.fn(async (contract: WatchedContract) => {
+      stored.push(contract)
+      return { ok: true as const }
+    })
+    const syncSaveContract = jest.fn(async (contract: WatchedContract) => {
+      const localResult = await saveContract(contract)
+      return { ...localResult, synced: true }
+    })
+    const addContract = jest.fn(async (contract: WatchedContract) => {
+      if (stored.some((c) => c.contract_id === contract.contract_id && c.network === contract.network)) {
+        throw new Error('DuplicateContractError')
+      }
+      stored.push(contract)
+    })
+
+    async function handleSave(input: {
+      label: string
+      contractId: string
+      network: Network
+      webhookUrl: string
+      rules: AlertRule[]
+    }) {
+      const errors = validateForm({ ...input, existingContracts: stored })
+      if (Object.keys(errors).length > 0) return { errors }
+      const contract: WatchedContract = {
+        id: 'new-uuid',
+        label: input.label.trim(),
+        contract_id: input.contractId.trim(),
+        network: input.network,
+        rules: input.rules,
+        webhook_url: input.webhookUrl.trim(),
+        created_at: Date.now(),
+        updated_at: Date.now(),
+      }
+      const result = await syncSaveContract(contract)
+      redirect('/')
+      return { result }
+    }
+
+    return { stored, redirect, saveContract, syncSaveContract, addContract, handleSave }
+  }
+
+  it('saves a valid contract once and redirects', async () => {
+    const h = makeHarness()
+
+    const { errors } = await h.handleSave({
+      label: 'Valid Contract',
+      contractId: validContractId,
+      network: 'testnet',
+      webhookUrl: 'https://example.com/webhook',
+      rules: [validRule],
+    })
+
+    expect(errors).toBeUndefined()
+    expect(h.stored).toHaveLength(1)
+    expect(h.stored[0].contract_id).toBe(validContractId)
+    expect(h.syncSaveContract).toHaveBeenCalledTimes(1)
+    expect(h.addContract).not.toHaveBeenCalled()
+    expect(h.redirect).toHaveBeenCalledTimes(1)
+  })
+
+  it('returns the local save result so the storage-full toast still works', async () => {
+    const h = makeHarness()
+    h.saveContract.mockResolvedValueOnce({ ok: false as const, reason: 'storage_full' })
+
+    const { result } = await h.handleSave({
+      label: 'Valid Contract',
+      contractId: validContractId,
+      network: 'testnet',
+      webhookUrl: 'https://example.com/webhook',
+      rules: [validRule],
+    })
+
+    expect(result).toEqual({ ok: false, reason: 'storage_full', synced: true })
+describe('Duplicate contract prefill (#200)', () => {
+  const validContractId = 'CDSO4GGZH7KBUQYKOIQDCMCFSRYEPOVDUX7Z4IB5TWNTLT2GDRKDQOYR'
+
+  it('populates the form from valid prefill data', () => {
+    const raw = JSON.stringify({
+      label: 'Copied Contract',
+      contract_id: validContractId,
+      network: 'mainnet',
+      webhook_url: 'https://example.com/hook',
+      rules: [{ type: 'AnyTransaction' }, { type: 'LargeTransfer', threshold: '1000' }],
+    })
+
+    const prefill = readDuplicatePrefill(raw)
+    expect(prefill).not.toBeNull()
+    expect(prefill!.label).toBe('Copied Contract')
+    expect(prefill!.contractId).toBe(validContractId)
+    expect(prefill!.network).toBe('mainnet')
+    expect(prefill!.webhookUrl).toBe('https://example.com/hook')
+    expect(prefill!.rules).toHaveLength(2)
+    expect(prefill!.rules[0]).toEqual({ type: 'AnyTransaction' })
+    expect(prefill!.notice).toBeUndefined()
+  })
+
+  it('drops corrupted and old-schema rules with a notice instead of crashing', () => {
+    const raw = JSON.stringify({
+      label: 'Old Contract',
+      contract_id: validContractId,
+      network: 'testnet',
+      webhook_url: 'https://example.com/hook',
+      rules: [
+        { rule_type: 'any_transaction' },
+        { type: 'AnyTransaction' },
+        { type: 'NotARealRule' },
+        null,
+        'garbage',
+      ],
+    })
+
+    const prefill = readDuplicatePrefill(raw)
+    expect(prefill).not.toBeNull()
+    expect(prefill!.rules).toEqual([{ type: 'AnyTransaction' }])
+    expect(prefill!.notice).toBeDefined()
+    expect(prefill!.notice).toMatch(/dropped/)
+  })
+
+  it('returns null for missing or unparseable prefill data', () => {
+    expect(readDuplicatePrefill(null)).toBeNull()
+    expect(readDuplicatePrefill('{not json')).toBeNull()
+  })
+
+  it('falls back to safe defaults when prefill fields are missing', () => {
+    const prefill = readDuplicatePrefill(JSON.stringify({}))
+    expect(prefill).not.toBeNull()
+    expect(prefill!.label).toBe('')
+    expect(prefill!.contractId).toBe('')
+    expect(prefill!.network).toBe('testnet')
+    expect(prefill!.webhookUrl).toBe('')
+    expect(prefill!.rules).toEqual([])
+    expect(prefill!.notice).toBeUndefined()
+  })
+
+  it('uses the expected sessionStorage key', () => {
+    expect(DUPLICATE_CONTRACT_KEY).toBe('txwatch_duplicate_contract')
   })
 })

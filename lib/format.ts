@@ -5,35 +5,6 @@ import { AlertRule } from '@/types'
  * For ID truncation use truncateId() from @/lib/stellar.
  */
 
-/** XLM supports at most 7 decimal places (stroops). */
-export const XLM_DECIMALS = 7
-
-/** Total XLM supply — a reasonable upper bound for a transfer threshold. */
-export const MAX_XLM_THRESHOLD = 50_000_000_000
-
-/**
- * Validates a LargeTransfer threshold in XLM.
- * Rejects non-finite values, values with more than 7 decimal places,
- * and values above the total XLM supply.
- * Returns an error message, or null when the value is valid.
- */
-export function validateXlmThreshold(value: number): string | null {
-  if (!Number.isFinite(value)) {
-    return 'Threshold must be a finite number'
-  }
-  if (value <= 0) {
-    return 'Threshold must be greater than 0'
-  }
-  if (value > MAX_XLM_THRESHOLD) {
-    return `Threshold cannot exceed ${MAX_XLM_THRESHOLD.toLocaleString()} XLM`
-  }
-  const decimals = (String(value).split('.')[1] || '').length
-  if (decimals > XLM_DECIMALS) {
-    return `Threshold supports at most ${XLM_DECIMALS} decimal places`
-  }
-  return null
-}
-
 // ---------------------------------------------------------------------------
 // Cached Intl.DateTimeFormat instances — avoids creating a new formatter on
 // every render call, which is measurably expensive when lists are long.
@@ -120,7 +91,7 @@ const RELATIVE_UNITS: [Intl.RelativeTimeFormatUnit, number][] = [
  */
 export function formatRelativeTime(
   timestamp: number,
-  now: number = Date.now(),
+  now: number = Date.now()
 ): string {
   const diff = timestamp - now
   const absDiff = Math.abs(diff)
@@ -132,49 +103,6 @@ export function formatRelativeTime(
   }
 
   return _relativeTimeFormatter.format(0, 'second')
-}
-
-/**
- * Masks a webhook URL so embedded secrets (Slack/Discord tokens, ?key= params)
- * are not shown in plain text. Keeps the origin and the start of the path, and
- * replaces the remainder with a fixed mask.
- *
- * e.g. "https://hooks.slack.com/services/T00/B00/XXXX" ->
- *      "https://hooks.slack.com/services/…/****"
- */
-export function maskWebhookUrl(url: string): string {
-  if (!url) {
-    return ''
-  }
-
-  let parsed: URL
-  try {
-    parsed = new URL(url)
-  } catch {
-    // Not a parseable URL — mask everything after the first few characters.
-    return url.length > 8 ? `${url.slice(0, 8)}…****` : '****'
-  }
-
-  const segments = parsed.pathname.split('/').filter(Boolean)
-  const visible = segments.slice(0, 1).join('/')
-  const maskedPath = visible ? `/${visible}/…/****` : '/…/****'
-
-  return `${parsed.origin}${maskedPath}`
-}
-
-/**
- * Returns the formatted last-modified time for a contract, or null when the
- * contract has not been modified since it was created (updated_at === created_at).
- * Callers can use the null result to hide the "Last modified" row.
- */
-export function formatLastModified(
-  updatedAt: number,
-  createdAt: number
-): string | null {
-  if (updatedAt === createdAt) {
-    return null
-  }
-  return formatDateTime(updatedAt)
 }
 
 /**

@@ -1,50 +1,13 @@
 import { Network } from '@/types'
 import { Address, xdr } from '@stellar/stellar-sdk'
 import { StrKey } from '@stellar/stellar-sdk'
-
-export const HORIZON_URLS: Record<Network, string> = {
-  mainnet: 'https://horizon.stellar.org',
-  testnet: 'https://horizon-testnet.stellar.org',
-  futurenet: 'https://horizon-futurenet.stellar.org',
-}
-
-export const SOROBAN_RPC_URLS: Record<Network, string> = {
-  mainnet: 'https://mainnet.stellar.validationcloud.io/v1/soroban/rpc',
-  testnet: 'https://soroban-testnet.stellar.org',
-  futurenet: 'https://rpc-futurenet.stellar.org',
-}
-
-function clean(v: string | undefined): string | undefined {
-  const t = v?.trim().replace(/\/+$/, '')
-  return t ? t : undefined
-}
-
-// NEXT_PUBLIC_* vars are inlined by Next.js only for literal `process.env.NAME`
-// accesses, so each variable is spelled out (no dynamic lookup).
-/**
- * Horizon URL for a network. Precedence: NEXT_PUBLIC_HORIZON_URL_<NETWORK>,
- * then NEXT_PUBLIC_HORIZON_URL (applies to every network), then the default.
- */
-export function horizonUrl(network: Network): string {
-  const perNetwork = {
-    mainnet: process.env.NEXT_PUBLIC_HORIZON_URL_MAINNET,
-    testnet: process.env.NEXT_PUBLIC_HORIZON_URL_TESTNET,
-    futurenet: process.env.NEXT_PUBLIC_HORIZON_URL_FUTURENET,
-  }[network]
-  return clean(perNetwork) ?? clean(process.env.NEXT_PUBLIC_HORIZON_URL) ?? HORIZON_URLS[network]
-}
-
-/** Soroban RPC URL for a network; same precedence as horizonUrl. */
-export function sorobanRpcUrl(network: Network): string {
-  const perNetwork = {
-    mainnet: process.env.NEXT_PUBLIC_SOROBAN_RPC_URL_MAINNET,
-    testnet: process.env.NEXT_PUBLIC_SOROBAN_RPC_URL_TESTNET,
-    futurenet: process.env.NEXT_PUBLIC_SOROBAN_RPC_URL_FUTURENET,
-  }[network]
-  return (
-    clean(perNetwork) ?? clean(process.env.NEXT_PUBLIC_SOROBAN_RPC_URL) ?? SOROBAN_RPC_URLS[network]
-  )
-}
+import { sorobanRpcUrl } from './networkUrls.mjs'
+export {
+  HORIZON_URLS,
+  SOROBAN_RPC_URLS,
+  horizonUrl,
+  sorobanRpcUrl,
+} from './networkUrls.mjs'
 
 export const STELLAR_EXPERT_BASE = 'https://stellar.expert/explorer'
 
@@ -53,31 +16,20 @@ export function explorerTxUrl(network: Network, txHash: string): string {
   return `${STELLAR_EXPERT_BASE}/${net}/tx/${txHash}`
 }
 
-export function explorerContractUrl(network: Network, contractId: string): string {
+export function explorerContractUrl(
+  network: Network,
+  contractId: string
+): string {
   const net = network === 'mainnet' ? 'public' : network
   return `${STELLAR_EXPERT_BASE}/${net}/contract/${contractId}`
 }
 
 /**
- * Resolve the network to use for explorer links. Prefers the alert's own
- * network when it is a valid Network, otherwise falls back to the contract's
- * network prop.
- */
-export function resolveExplorerNetwork(
-  alertNetwork: string | undefined,
-  fallback: Network
-): Network {
-  return isNetwork(alertNetwork) ? alertNetwork : fallback
-}
-
-export function isNetwork(value: string | undefined): value is Network {
-  return value === 'mainnet' || value === 'testnet' || value === 'futurenet'
-}
-
-/**
  * Maps Freighter network strings (e.g. PUBLIC, TESTNET, FUTURENET) to the app Network type (#8).
  */
-export function mapFreighterNetwork(freighterNetwork: string | null | undefined): Network | null {
+export function mapFreighterNetwork(
+  freighterNetwork: string | null | undefined
+): Network | null {
   if (!freighterNetwork) return null
   const normalized = freighterNetwork.trim().toUpperCase()
   switch (normalized) {
@@ -129,7 +81,8 @@ export function normalizeContractId(input: string): NormalizedContractIdResult {
   if (explorerMatch) {
     const rawNetwork = explorerMatch[1].toLowerCase()
     const rawId = explorerMatch[2].trim().toUpperCase()
-    const network: Network = rawNetwork === 'public' ? 'mainnet' : (rawNetwork as Network)
+    const network: Network =
+      rawNetwork === 'public' ? 'mainnet' : (rawNetwork as Network)
     return {
       contractId: rawId,
       network,
@@ -149,13 +102,10 @@ export function normalizeContractId(input: string): NormalizedContractIdResult {
   }
 }
 
-export function buildContractInstanceLedgerKey(contractId: string): string {
+function buildContractInstanceLedgerKey(contractId: string): string {
   try {
     const address = Address.fromString(contractId)
-    const durability =
-      typeof (xdr.ContractDataDurability as any)?.persistent === 'function'
-        ? (xdr.ContractDataDurability as any).persistent()
-        : (xdr.ContractDataDurability as any)?.persistent
+    const durability = xdr.ContractDataDurability.persistent()
     const ledgerKey = xdr.LedgerKey.contractData(
       new xdr.LedgerKeyContractData({
         contract: address.toScAddress(),
@@ -231,37 +181,108 @@ export function isValidUrl(url: string): boolean {
   }
 }
 
+/** #117: Codes returned by validateWebhookUrl. */
+export type WebhookUrlErrorCode =
+  | 'invalid_url'
+  | 'credentials_in_url'
+  | 'http_on_mainnet'
+  | 'http_warning'
+  | 'loopback_not_allowed'
+  | 'private_ip_not_allowed'
+  | 'link_local_not_allowed'
+
+export interface WebhookUrlValidationResult {
+  /** True when the URL may be submitted (http_warning is still valid). */
+  valid: boolean
+  /** Error code, or null when there is nothing to report. */
+  code: WebhookUrlErrorCode | null
+  /** True when the code is a dismissible warning rather than a blocking error. */
+  warning: boolean
+  /** User-facing message for the code, or null when there is nothing to report. */
+  message: string | null
+}
+
+/** User-facing messages for each webhook URL validation code. */
+export const WEBHOOK_URL_MESSAGES: Record<WebhookUrlErrorCode, string> = {
+  invalid_url: 'Enter a valid URL starting with http:// or https://.',
+  credentials_in_url: 'Remove the username and password from the URL.',
+  http_on_mainnet: 'Plain http:// webhooks are not allowed on mainnet. Use https://.',
+  http_warning: 'This webhook uses plain http://. Use https:// in production.',
+  loopback_not_allowed: 'Loopback addresses (localhost, 127.0.0.1, ::1) are not allowed.',
+  private_ip_not_allowed: 'Private IP addresses are not allowed.',
+  link_local_not_allowed: 'Link-local addresses are not allowed.',
+}
+
+/** Maps a validation code to its user-facing message. */
+export function webhookUrlMessage(code: WebhookUrlErrorCode | null): string | null {
+  return code ? WEBHOOK_URL_MESSAGES[code] : null
+}
+
+/** #117: Validate webhook URLs with security checks. */
+export function validateWebhookUrl(url: string, network: Network): WebhookUrlValidationResult {
+  const result = (code: WebhookUrlErrorCode | null): WebhookUrlValidationResult => ({
+    valid: code === null || code === 'http_warning',
+    code,
+    warning: code === 'http_warning',
+    message: webhookUrlMessage(code),
+  })
+
+  if (!isValidUrl(url)) return result('invalid_url')
 /** #117: Validate webhook URLs with security checks. Returns error/warning code or null if valid. */
-export function validateWebhookUrl(url: string, network: Network): string | null {
+export function validateWebhookUrl(
+  url: string,
+  network: Network
+): string | null {
   if (!isValidUrl(url)) return 'invalid_url'
 
   try {
     const u = new URL(url)
 
     // Reject URLs with embedded credentials
-    if (u.username || u.password) return 'credentials_in_url'
+    if (u.username || u.password) return result('credentials_in_url')
 
     // Warn on plain http (block for mainnet)
-    if (u.protocol === 'http:') return network === 'mainnet' ? 'http_on_mainnet' : 'http_warning'
+    if (u.protocol === 'http:') return result(network === 'mainnet' ? 'http_on_mainnet' : 'http_warning')
 
     // Reject localhost and private IP ranges
     const hostname = u.hostname || ''
     if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]') {
-      return 'loopback_not_allowed'
+      return result('loopback_not_allowed')
     }
 
     // Reject private IP ranges (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, fe80::/10)
     if (/^(10|172\.(1[6-9]|2[0-9]|3[01])|192\.168)\./.test(hostname) ||
         hostname.startsWith('fc') || hostname.startsWith('fd') ||
         hostname.startsWith('fe80')) {
+      return result('private_ip_not_allowed')
+    if (u.protocol === 'http:')
+      return network === 'mainnet' ? 'http_on_mainnet' : 'http_warning'
+
+    // Reject localhost and private IP ranges
+    const hostname = u.hostname || ''
+    if (
+      hostname === 'localhost' ||
+      hostname === '127.0.0.1' ||
+      hostname === '[::1]'
+    ) {
+      return 'loopback_not_allowed'
+    }
+
+    // Reject private IP ranges (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, fe80::/10)
+    if (
+      /^(10|172\.(1[6-9]|2[0-9]|3[01])|192\.168)\./.test(hostname) ||
+      hostname.startsWith('fc') ||
+      hostname.startsWith('fd') ||
+      hostname.startsWith('fe80')
+    ) {
       return 'private_ip_not_allowed'
     }
 
     // Reject link-local addresses (169.254.0.0/16, fe80::/10)
-    if (/^169\.254\./.test(hostname)) return 'link_local_not_allowed'
+    if (/^169\.254\./.test(hostname)) return result('link_local_not_allowed')
 
-    return null
+    return result(null)
   } catch {
-    return 'invalid_url'
+    return result('invalid_url')
   }
 }

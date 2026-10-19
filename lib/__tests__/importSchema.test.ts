@@ -41,6 +41,86 @@ describe('parseImport', () => {
     expect(validateContractEntry({ ...good, webhook_url: 'nope' })).toMatch(/webhook_url/)
   })
 
+  describe('webhook url validation codes', () => {
+    it('rejects credentials embedded in the url', () => {
+      const r = validateContractEntry({
+        ...good,
+        webhook_url: 'https://user:pass@example.com/hook',
+      })
+      expect(typeof r).toBe('string')
+      expect(r).toMatch(/credential/i)
+    })
+
+    it('rejects plain http on mainnet', () => {
+      const r = validateContractEntry({
+        ...good,
+        network: 'mainnet',
+        webhook_url: 'http://example.com/hook',
+      })
+      expect(typeof r).toBe('string')
+      expect(r).toMatch(/https/i)
+    })
+
+    it('rejects loopback addresses', () => {
+      const r = validateContractEntry({ ...good, webhook_url: 'http://127.0.0.1/hook' })
+      expect(typeof r).toBe('string')
+      expect(r).toMatch(/loopback|local/i)
+    })
+
+    it('rejects private network ranges', () => {
+      const r = validateContractEntry({ ...good, webhook_url: 'http://10.0.0.5/hook' })
+      expect(typeof r).toBe('string')
+      expect(r).toMatch(/private/i)
+    })
+
+    it('rejects credentials plus private range on mainnet', () => {
+      const r = validateContractEntry({
+        ...good,
+        network: 'mainnet',
+        webhook_url: 'http://user:pass@10.0.0.5/hook',
+      })
+      expect(typeof r).toBe('string')
+    })
+
+    it('accepts http on testnet (warning only)', () => {
+      const r = validateContractEntry({ ...good, webhook_url: 'http://example.com/hook' })
+      expect(r).not.toBe('string')
+      expect(typeof r).not.toBe('string')
+    })
+  })
+
+  describe('webhook_secret', () => {
+    it('preserves a valid secret through validation', () => {
+      const r = validateContractEntry({ ...good, webhook_secret: 'whsec_abc123' })
+      expect(typeof r).not.toBe('string')
+      expect(r).toMatchObject({ webhook_secret: 'whsec_abc123' })
+    })
+
+    it('omits the secret when absent', () => {
+      expect(validateContractEntry(good)).not.toHaveProperty('webhook_secret')
+    })
+
+    it('rejects a non-string secret', () => {
+      const r = validateContractEntry({ ...good, webhook_secret: 42 })
+      expect(typeof r).toBe('string')
+      expect(r).toMatch(/webhook_secret/)
+    })
+
+    it('rejects an empty secret', () => {
+      const r = validateContractEntry({ ...good, webhook_secret: '   ' })
+      expect(typeof r).toBe('string')
+      expect(r).toMatch(/webhook_secret/)
+    })
+
+    it('preserves the secret through parseImport', () => {
+      const r = parseImport(
+        JSON.stringify({ version: 1, contracts: [{ ...good, webhook_secret: 'whsec_xyz' }] }),
+      )
+      expect(r.errors).toEqual([])
+      expect(r.contracts[0]).toMatchObject({ webhook_secret: 'whsec_xyz' })
+    })
+  })
+
   it('rejects invalid admin function names and names the offender', () => {
     const r = validateContractEntry({
       ...good,

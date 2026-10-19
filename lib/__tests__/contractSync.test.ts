@@ -21,9 +21,19 @@ afterEach(() => vi.unstubAllEnvs())
 describe('contractSync', () => {
   it('is localStorage-only when the API URL is empty', async () => {
     vi.stubEnv('NEXT_PUBLIC_API_URL', '')
-    await syncSaveContract(c('a'), true)
+    const result = await syncSaveContract(c('a'), true)
+    expect(result.localSaved).toBe(true)
     expect(getContracts()).toHaveLength(1)
     expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('returns the local save result from saveContract', async () => {
+    vi.stubEnv('NEXT_PUBLIC_API_URL', '')
+    const spy = vi.spyOn(storage, 'saveContract').mockReturnValue(false)
+    const result = await syncSaveContract(c('a'), true)
+    expect(spy).toHaveBeenCalledTimes(1)
+    expect(result.localSaved).toBe(false)
+    spy.mockRestore()
   })
 
   it('POSTs new contracts and marks them synced', async () => {

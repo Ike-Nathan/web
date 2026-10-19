@@ -209,6 +209,43 @@ describe('ContractImportExport', () => {
     await waitFor(() => expect(syncDeleteContract).toHaveBeenCalled())
   })
 
+  it('preserves webhook_secret through import', async () => {
+    render(<ContractImportExport />)
+    upload(JSON.stringify({ version: 1, contracts: [entry({ webhook_secret: 'whsec_abc123' })] }))
+    expect(await screen.findByTestId('import-preview')).toHaveTextContent('1 valid')
+    fireEvent.click(screen.getByText('Apply import'))
+    await waitFor(() => expect(getContracts()).toHaveLength(1))
+    expect(getContracts()[0].webhook_secret).toBe('whsec_abc123')
+  })
+
+  it('excludes webhook_secret from CSV exports', async () => {
+    const createObjectURL = jest.fn(() => 'blob:mock')
+    Object.defineProperty(URL, 'createObjectURL', { value: createObjectURL, configurable: true })
+    Object.defineProperty(URL, 'revokeObjectURL', { value: jest.fn(), configurable: true })
+
+    let capturedBlob: Blob | undefined
+    createObjectURL.mockImplementation((blob: Blob) => {
+      capturedBlob = blob
+      return 'blob:mock'
+    })
+    const clickSpy = jest.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+
+    render(<ContractImportExport />)
+    upload(JSON.stringify({ version: 1, contracts: [entry({ webhook_secret: 'whsec_abc123' })] }))
+    fireEvent.click(await screen.findByText('Apply import'))
+    await waitFor(() => expect(getContracts()).toHaveLength(1))
+
+    fireEvent.click(screen.getByLabelText('Export contracts only'))
+    fireEvent.click(screen.getByText('Export'))
+
+    await waitFor(() => expect(capturedBlob).toBeDefined())
+    const text = await capturedBlob!.text()
+    expect(text).not.toContain('whsec_abc123')
+    expect(text).not.toContain('webhook_secret')
+
+    clickSpy.mockRestore()
+  })
+
   it('re-keys alerts instead of deleting them when a replaced contract matches by (contract_id, network)', async () => {
     localStorage.setItem(
       'txwatch:alerts',
