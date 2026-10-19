@@ -3,8 +3,8 @@ import { MetadataRoute } from 'next'
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: 'TX Watch',
-    short_name: 'TX Watch',
+    name: 'TxWatch',
+    short_name: 'TxWatch',
     description: 'Monitor and manage Stellar contracts with Freighter',
     start_url: '/',
     display: 'standalone',
@@ -20,6 +20,12 @@ export default function manifest(): MetadataRoute.Manifest {
         src: '/apple-icon.png',
         sizes: '180x180',
         type: 'image/png',
+      },
+      {
+        src: '/icon-maskable-512.png',
+        sizes: '512x512',
+        type: 'image/png',
+        purpose: 'maskable',
       },
     ],
   }
