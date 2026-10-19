@@ -26,6 +26,8 @@ export interface SyncStatus {
  * Re-exported from the storage layer so callers get a subscription that fires
  * for both same-tab and cross-tab contract cache writes.
  */
+export const CONTRACTS_STORAGE_KEY = CONTRACTS_KEY
+
 export { onContractsChange }
 
 export function getSyncStatuses(): Record<string, SyncStatus> {
@@ -61,15 +63,32 @@ export async function syncSaveContract(
 ): Promise<SyncResult> {
   saveContract(contract)
   if (!isApiConfigured()) return { ok: true }
+export function syncSaveContract(contract: WatchedContract, isNew: boolean): { saved: boolean, sync: Promise<SyncResult> } {
+  let saved = false;
   try {
-    await (isNew ? createContract(contract) : updateContract(contract))
-    setStatus(contract.id, { state: 'synced', at: Date.now() })
-    return { ok: true }
-  } catch (e) {
-    const error = errMsg(e)
-    setStatus(contract.id, { state: 'error', error, at: Date.now() })
-    return { ok: false, error }
+    saved = saveContract(contract)
+  } catch (err) {
+    return { saved: false, sync: Promise.resolve({ ok: false, error: errMsg(err) }) }
   }
+
+  if (!saved) {
+    return { saved: false, sync: Promise.resolve({ ok: false, error: 'Storage full or unavailable' }) }
+  }
+
+  const sync = (async () => {
+    if (!isApiConfigured()) return { ok: true }
+    try {
+      await (isNew ? createContract(contract) : updateContract(contract))
+      setStatus(contract.id, { state: 'synced', at: Date.now() })
+      return { ok: true }
+    } catch (e) {
+      const error = errMsg(e)
+      setStatus(contract.id, { state: 'error', error, at: Date.now() })
+      return { ok: false, error }
+    }
+  })()
+
+  return { saved, sync }
 }
 
 export async function syncDeleteContract(id: string): Promise<SyncResult> {
@@ -80,7 +99,6 @@ export async function syncDeleteContract(id: string): Promise<SyncResult> {
     await removeContract(id)
     return { ok: true }
   } catch (e) {
-    // Local delete already happened; the next refresh restores it if the API still has it.
     return { ok: false, error: errMsg(e) }
   }
 }
@@ -96,6 +114,7 @@ export async function refreshContracts(): Promise<{
   contracts: WatchedContract[]
   error?: string
 }> {
+export async function refreshContracts(): Promise<{ contracts: WatchedContract[]; error?: string }> {
   if (!isApiConfigured()) return { contracts: getContracts() }
   try {
     const remote = await listContracts()

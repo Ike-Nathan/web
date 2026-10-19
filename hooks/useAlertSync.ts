@@ -10,6 +10,8 @@ export interface AlertSyncState {
   /** Epoch ms of the last successful sync. */
   lastSync: number | null
   enabled: boolean
+  /** Force an immediate poll cycle */
+  syncNow: () => void
 }
 
 /**
@@ -24,11 +26,14 @@ export function useAlertSync(
   network: Network | string | undefined,
   onNew?: (fresh: AlertPayload[]) => void
 ): AlertSyncState {
-  const [state, setState] = useState<AlertSyncState>({
+  const [state, setState] = useState<Omit<AlertSyncState, 'syncNow'>>({
     live: false,
     lastSync: null,
     enabled: false,
   })
+  const [pollTrigger, setPollTrigger] = useState(0)
+
+  const syncNow = () => setPollTrigger(p => p + 1)
 
   useEffect(() => {
     if (!contractId || !network || !isApiConfigured()) return
@@ -41,7 +46,44 @@ export function useAlertSync(
       onError: () => setState((s) => ({ ...s, live: false })),
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [contractId, network])
+  }, [contractId, network, pollTrigger])
 
-  return state
+  return { ...state, syncNow }
+}
+
+/**
+ * Recompute a derived value (e.g. today's alert count) whenever the window
+ * regains focus or the local day rolls over at midnight, so the Dashboard
+ * stays fresh without a reload.
+ */
+export function useDailyRefresh(recompute: () => void): void {
+  useEffect(() => {
+    const onFocus = () => recompute()
+    window.addEventListener('focus', onFocus)
+
+    let timer: ReturnType<typeof setTimeout>
+    const scheduleMidnight = () => {
+      const now = new Date()
+      const midnight = new Date(
+        now.getFullYear(),
+        now.getMonth(),
+        now.getDate() + 1,
+        0,
+        0,
+        0,
+        0
+      )
+      timer = setTimeout(() => {
+        recompute()
+        scheduleMidnight()
+      }, midnight.getTime() - now.getTime())
+    }
+    scheduleMidnight()
+
+    return () => {
+      window.removeEventListener('focus', onFocus)
+      clearTimeout(timer)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 }
