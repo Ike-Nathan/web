@@ -19,6 +19,7 @@ import {
   getNetworkDetails,
   isConnected,
   requestAccess,
+  signTransaction,
 } from '@stellar/freighter-api'
 
 import type { Network } from '@/types'
@@ -283,4 +284,42 @@ export async function connectFreighter(): Promise<FreighterSession> {
 
   const details = await readNetworkDetails()
   return { publicKey: address, ...details }
+}
+
+/**
+ * Ask Freighter to sign a transaction XDR. The user has to review and approve
+ * the request in the extension, so it uses the long user-action timeout rather
+ * than the short probe timeout. A decline maps to `FreighterRejectedError` and
+ * an unsettled request to `FreighterTimeoutError`.
+ */
+export async function signWithFreighter(
+  xdr: string,
+  networkPassphrase: string,
+  address?: string
+): Promise<string> {
+  try {
+    const result = await withTimeout(
+      signTransaction(xdr, { networkPassphrase, address }),
+      USER_ACTION_TIMEOUT_MS,
+      () => new FreighterTimeoutError()
+    )
+    if (result.error) {
+      throw new FreighterRejectedError(
+        apiErrorMessage(result.error, 'Signature rejected')
+      )
+    }
+    if (!result.signedTxXdr) {
+      throw new FreighterRejectedError('Signature rejected')
+    }
+    return result.signedTxXdr
+  } catch (error) {
+    if (
+      error instanceof FreighterRejectedError ||
+      error instanceof FreighterUnavailableError ||
+      error instanceof FreighterTimeoutError
+    ) {
+      throw error
+    }
+    throw new FreighterRejectedError(messageOf(error, 'Signature rejected'))
+  }
 }
