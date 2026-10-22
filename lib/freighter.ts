@@ -229,7 +229,16 @@ export async function readFreighterConnection(): Promise<{
   if (!connected)
     return { publicKey: null, network: null, networkPassphrase: null }
 
-  const { address, error } = await withTimeout(getAddress())
+  // A slow or hung extension makes withTimeout reject. That means it is not
+  // reachable, which this function reports as null (like a failed isConnected
+  // probe above), so callers show "unavailable" rather than "disconnected".
+  let result: Awaited<ReturnType<typeof getAddress>>
+  try {
+    result = await withTimeout(getAddress())
+  } catch {
+    return null
+  }
+  const { address, error } = result
   if (error || !address)
     return { publicKey: null, network: null, networkPassphrase: null }
 
